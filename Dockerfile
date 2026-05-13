@@ -3,12 +3,16 @@ WORKDIR /app
 
 RUN npm install -g pnpm@9
 
+# Copy workspace manifests and lockfile
 COPY package.json pnpm-workspace.yaml pnpm-lock.yaml ./
 
+# Copy workspace packages needed
 COPY lib/db ./lib/db
 COPY artifacts/discord-bot ./artifacts/discord-bot
 
-RUN pnpm install --frozen-lockfile --filter "@workspace/discord-bot..." 2>/dev/null || \
-    pnpm install --no-frozen-lockfile --filter "@workspace/discord-bot..."
+# Install ALL workspace dependencies (including root devDeps like tsx)
+RUN pnpm install --frozen-lockfile 2>/dev/null || pnpm install --no-frozen-lockfile
 
-CMD ["pnpm", "--filter", "@workspace/discord-bot", "run", "start"]
+WORKDIR /app/artifacts/discord-bot
+
+CMD ["pnpm", "run", "start"]
