@@ -1,0 +1,12 @@
+node_modules
+**/node_modules
+**/dist
+.git
+.replit
+.local
+artifacts/api-server
+artifacts/mockup-sandbox
+lib/api-client-react
+lib/api-spec
+lib/api-zod
+*.log
