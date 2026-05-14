@@ -1,7 +1,7 @@
 import { SlashCommandBuilder, type ChatInputCommandInteraction, EmbedBuilder } from "discord.js";
 import { getGuildConfig } from "../utils/config.js";
-import { db } from "@workspace/db";
-import { bugReportsTable } from "@workspace/db";
+import { db, bugReportsTable } from "@workspace/db";
+import { addBugReportJson } from "../utils/db-json.js";
 
 export const data = new SlashCommandBuilder()
   .setName("bug")
@@ -56,16 +56,29 @@ export async function execute(interaction: ChatInputCommandInteraction) {
   await msg.react("🟡");
   await msg.react("🟢");
 
-  await db.insert(bugReportsTable).values({
-    guildId: interaction.guildId!,
-    messageId: msg.id,
-    channelId: canal.id,
-    discordUserId: interaction.user.id,
-    discordUserTag: interaction.user.tag,
-    description: descripcion,
-    steps: pasos ?? undefined,
-    device: dispositivo ?? undefined,
-  });
+  try {
+    await db.insert(bugReportsTable).values({
+      guildId: interaction.guildId!,
+      messageId: msg.id,
+      channelId: canal.id,
+      discordUserId: interaction.user.id,
+      discordUserTag: interaction.user.tag,
+      description: descripcion,
+      steps: pasos ?? undefined,
+      device: dispositivo ?? undefined,
+    });
+  } catch {
+    await addBugReportJson({
+      guildId: interaction.guildId!,
+      messageId: msg.id,
+      channelId: canal.id,
+      discordUserId: interaction.user.id,
+      discordUserTag: interaction.user.tag,
+      description: descripcion,
+      steps: pasos ?? undefined,
+      device: dispositivo ?? undefined,
+    });
+  }
 
   await interaction.reply({
     content: `✅ Tu reporte fue enviado a ${canal}. ¡Gracias por ayudar a mejorar el servidor!`,
