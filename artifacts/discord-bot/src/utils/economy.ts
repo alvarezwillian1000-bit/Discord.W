@@ -1,43 +1,56 @@
-import { db } from "@workspace/db";
-import { userEconomyTable } from "@workspace/db";
+import { db, userEconomyTable } from "@workspace/db";
 import { eq, and, desc, sql } from "drizzle-orm";
 import { logger } from "../utils/logger.js";
+import {
+  getEconomyJson,
+  addCoinsJson,
+  transferCoinsJson,
+  getEconomyLeaderboardJson,
+} from "./db-json.js";
 
 export async function getEconomy(guildId: string, userId: string) {
-  const [row] = await db
-    .select()
-    .from(userEconomyTable)
-    .where(and(eq(userEconomyTable.guildId, guildId), eq(userEconomyTable.userId, userId)))
-    .limit(1);
+  try {
+    const [row] = await db
+      .select()
+      .from(userEconomyTable)
+      .where(and(eq(userEconomyTable.guildId, guildId), eq(userEconomyTable.userId, userId)))
+      .limit(1);
 
-  if (row) return row;
+    if (row) return row;
 
-  const [created] = await db
-    .insert(userEconomyTable)
-    .values({ guildId, userId })
-    .onConflictDoNothing()
-    .returning();
+    const [created] = await db
+      .insert(userEconomyTable)
+      .values({ guildId, userId })
+      .onConflictDoNothing()
+      .returning();
 
-  if (created) return created;
+    if (created) return created;
 
-  const [fetched] = await db
-    .select()
-    .from(userEconomyTable)
-    .where(and(eq(userEconomyTable.guildId, guildId), eq(userEconomyTable.userId, userId)))
-    .limit(1);
+    const [fetched] = await db
+      .select()
+      .from(userEconomyTable)
+      .where(and(eq(userEconomyTable.guildId, guildId), eq(userEconomyTable.userId, userId)))
+      .limit(1);
 
-  return fetched!;
+    return fetched!;
+  } catch {
+    return await getEconomyJson(guildId, userId);
+  }
 }
 
 export async function addCoins(guildId: string, userId: string, amount: number): Promise<void> {
-  await getEconomy(guildId, userId);
-  await db
-    .update(userEconomyTable)
-    .set({
-      coins: sql`GREATEST(0, ${userEconomyTable.coins} + ${amount})`,
-      totalEarned: amount > 0 ? sql`${userEconomyTable.totalEarned} + ${amount}` : userEconomyTable.totalEarned,
-    })
-    .where(and(eq(userEconomyTable.guildId, guildId), eq(userEconomyTable.userId, userId)));
+  try {
+    await getEconomy(guildId, userId);
+    await db
+      .update(userEconomyTable)
+      .set({
+        coins: sql`GREATEST(0, ${userEconomyTable.coins} + ${amount})`,
+        totalEarned: amount > 0 ? sql`${userEconomyTable.totalEarned} + ${amount}` : userEconomyTable.totalEarned,
+      })
+      .where(and(eq(userEconomyTable.guildId, guildId), eq(userEconomyTable.userId, userId)));
+  } catch {
+    await addCoinsJson(guildId, userId, amount);
+  }
 }
 
 export async function transferCoins(
@@ -46,33 +59,41 @@ export async function transferCoins(
   toUserId: string,
   amount: number
 ): Promise<boolean> {
-  const from = await getEconomy(guildId, fromUserId);
-  if (from.coins < amount) return false;
+  try {
+    const from = await getEconomy(guildId, fromUserId);
+    if (from.coins < amount) return false;
 
-  await db
-    .update(userEconomyTable)
-    .set({ coins: sql`${userEconomyTable.coins} - ${amount}` })
-    .where(and(eq(userEconomyTable.guildId, guildId), eq(userEconomyTable.userId, fromUserId)));
+    await db
+      .update(userEconomyTable)
+      .set({ coins: sql`${userEconomyTable.coins} - ${amount}` })
+      .where(and(eq(userEconomyTable.guildId, guildId), eq(userEconomyTable.userId, fromUserId)));
 
-  await getEconomy(guildId, toUserId);
-  await db
-    .update(userEconomyTable)
-    .set({
-      coins: sql`${userEconomyTable.coins} + ${amount}`,
-      totalEarned: sql`${userEconomyTable.totalEarned} + ${amount}`,
-    })
-    .where(and(eq(userEconomyTable.guildId, guildId), eq(userEconomyTable.userId, toUserId)));
+    await getEconomy(guildId, toUserId);
+    await db
+      .update(userEconomyTable)
+      .set({
+        coins: sql`${userEconomyTable.coins} + ${amount}`,
+        totalEarned: sql`${userEconomyTable.totalEarned} + ${amount}`,
+      })
+      .where(and(eq(userEconomyTable.guildId, guildId), eq(userEconomyTable.userId, toUserId)));
 
-  return true;
+    return true;
+  } catch {
+    return await transferCoinsJson(guildId, fromUserId, toUserId, amount);
+  }
 }
 
 export async function getEconomyLeaderboard(guildId: string, limit = 10) {
-  return db
-    .select()
-    .from(userEconomyTable)
-    .where(eq(userEconomyTable.guildId, guildId))
-    .orderBy(desc(sql`${userEconomyTable.coins} + ${userEconomyTable.bank}`))
-    .limit(limit);
+  try {
+    return db
+      .select()
+      .from(userEconomyTable)
+      .where(eq(userEconomyTable.guildId, guildId))
+      .orderBy(desc(sql`${userEconomyTable.coins} + ${userEconomyTable.bank}`))
+      .limit(limit);
+  } catch {
+    return await getEconomyLeaderboardJson(guildId, limit);
+  }
 }
 
 export function formatCoins(amount: number): string {
