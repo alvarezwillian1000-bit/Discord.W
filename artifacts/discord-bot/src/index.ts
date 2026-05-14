@@ -11,45 +11,95 @@ export { logger };
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
 
-export const client = new Client({
-  intents: [
-    GatewayIntentBits.Guilds,
-    GatewayIntentBits.GuildMembers,
-    GatewayIntentBits.GuildMessages,
-    GatewayIntentBits.MessageContent,
-    GatewayIntentBits.GuildMessageReactions,
-  ],
-});
+let client: Client | null = null;
 
-(client as any).commands = new Collection();
+try {
+  client = new Client({
+    intents: [
+      GatewayIntentBits.Guilds,
+      GatewayIntentBits.GuildMembers,
+      GatewayIntentBits.GuildMessages,
+      GatewayIntentBits.MessageContent,
+      GatewayIntentBits.GuildMessageReactions,
+    ],
+  });
+  (client as any).commands = new Collection();
+} catch (err) {
+  logger.error(err, "Error creando cliente de Discord");
+  process.exit(1);
+}
 
 async function loadCommands() {
-  const commandsPath = join(__dirname, "commands");
-  const commandFiles = readdirSync(commandsPath).filter(
-    (f) => f.endsWith(".ts") || f.endsWith(".js")
-  );
-  for (const file of commandFiles) {
-    const filePath = pathToFileURL(join(commandsPath, file)).href;
-    const command = await import(filePath);
-    if ("data" in command && "execute" in command) {
-      (client as any).commands.set(command.data.name, command);
+  try {
+    const commandsPath = join(__dirname, "commands");
+    if (!existsSyncCheck(commandsPath)) {
+      logger.warn("No se encontró directorio de comandos");
+      return;
     }
+    const commandFiles = readdirSync(commandsPath).filter(
+      (f) => f.endsWith(".ts") || f.endsWith(".js")
+    );
+    for (const file of commandFiles) {
+      try {
+        const filePath = pathToFileURL(join(commandsPath, file)).href;
+        const command = await import(filePath);
+        if ("data" in command && "execute" in command) {
+          (client as any).commands.set(command.data.name, command);
+        }
+      } catch (err) {
+        logger.error({ err, file }, "Error cargando comando");
+      }
+    }
+  } catch (err) {
+    logger.error(err, "Error en loadCommands");
   }
 }
 
 async function loadEvents() {
-  const eventsPath = join(__dirname, "events");
-  const eventFiles = readdirSync(eventsPath).filter(
-    (f) => f.endsWith(".ts") || f.endsWith(".js")
-  );
-  for (const file of eventFiles) {
-    const filePath = pathToFileURL(join(eventsPath, file)).href;
-    const event = await import(filePath);
-    if (event.once) {
-      client.once(event.name, (...args: unknown[]) => event.execute(...args));
-    } else {
-      client.on(event.name, (...args: unknown[]) => event.execute(...args));
+  try {
+    const eventsPath = join(__dirname, "events");
+    if (!existsSyncCheck(eventsPath)) {
+      logger.warn("No se encontró directorio de eventos");
+      return;
     }
+    const eventFiles = readdirSync(eventsPath).filter(
+      (f) => f.endsWith(".ts") || f.endsWith(".js")
+    );
+    for (const file of eventFiles) {
+      try {
+        const filePath = pathToFileURL(join(eventsPath, file)).href;
+        const event = await import(filePath);
+        if (event.once) {
+          client!.once(event.name, (...args: unknown[]) => {
+            try {
+              event.execute(...args);
+            } catch (err) {
+              logger.error({ err, file }, "Error en evento once");
+            }
+          });
+        } else {
+          client!.on(event.name, (...args: unknown[]) => {
+            try {
+              event.execute(...args);
+            } catch (err) {
+              logger.error({ err, file }, "Error en evento");
+            }
+          });
+        }
+      } catch (err) {
+        logger.error({ err, file }, "Error cargando evento");
+      }
+    }
+  } catch (err) {
+    logger.error(err, "Error en loadEvents");
+  }
+}
+
+function existsSyncCheck(p: string) {
+  try {
+    return readdirSync(p) !== undefined;
+  } catch {
+    return false;
   }
 }
 
@@ -58,7 +108,12 @@ function startHealthServer() {
   const server = createServer((req, res) => {
     if (req.url === "/healthz" || req.url === "/discord-bot/healthz") {
       res.writeHead(200, { "Content-Type": "application/json" });
-      res.end(JSON.stringify({ status: "ok", bot: client.user?.tag ?? "connecting" }));
+      res.end(
+        JSON.stringify({
+          status: "ok",
+          bot: client?.user?.tag ?? "connecting",
+        })
+      );
     } else {
       res.writeHead(200, { "Content-Type": "application/json" });
       res.end(JSON.stringify({ status: "ok" }));
@@ -76,7 +131,7 @@ async function main() {
     process.exit(1);
   }
 
-  // Start health server FIRST (before any blocking DB operations)
+  // Start health server FIRST (before any blocking operations)
   startHealthServer();
 
   // Initialize DB in the background (non-blocking)
@@ -86,14 +141,16 @@ async function main() {
 
   await loadCommands();
   await loadEvents();
+
+  if (!client) {
+    logger.error("Cliente de Discord no inicializado");
+    process.exit(1);
+  }
   await client.login(token);
 }
 
-// Solo arrancar el bot si este archivo es el punto de entrada
-const isMain = process.argv[1] === __filename;
-if (isMain) {
-  main().catch((err) => {
-    logger.error(err, "Error fatal al iniciar el bot");
-    process.exit(1);
-  });
-}
+// Always start — remove isMain check that may fail under tsx
+main().catch((err) => {
+  logger.error(err, "Error fatal al iniciar el bot");
+  process.exit(1);
+});
