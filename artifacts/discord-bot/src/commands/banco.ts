@@ -1,8 +1,8 @@
 import { SlashCommandBuilder, type ChatInputCommandInteraction, EmbedBuilder } from "discord.js";
 import { getEconomy, formatCoins } from "../utils/economy.js";
-import { db } from "@workspace/db";
-import { userEconomyTable } from "@workspace/db";
+import { db, userEconomyTable } from "@workspace/db";
 import { eq, and, sql } from "drizzle-orm";
+import { setBankJson } from "../utils/db-json.js";
 
 export const data = new SlashCommandBuilder()
   .setName("banco")
@@ -55,13 +55,17 @@ export async function execute(interaction: ChatInputCommandInteraction) {
       await interaction.editReply({ content: `❌ No tienes suficientes monedas. Tienes ${formatCoins(eco.coins)} en cartera.` });
       return;
     }
-    await db
-      .update(userEconomyTable)
-      .set({
-        coins: sql`${userEconomyTable.coins} - ${cantidad}`,
-        bank: sql`${userEconomyTable.bank} + ${cantidad}`,
-      })
-      .where(and(eq(userEconomyTable.guildId, interaction.guildId!), eq(userEconomyTable.userId, interaction.user.id)));
+    try {
+      await db
+        .update(userEconomyTable)
+        .set({
+          coins: sql`${userEconomyTable.coins} - ${cantidad}`,
+          bank: sql`${userEconomyTable.bank} + ${cantidad}`,
+        })
+        .where(and(eq(userEconomyTable.guildId, interaction.guildId!), eq(userEconomyTable.userId, interaction.user.id)));
+    } catch {
+      await setBankJson(interaction.guildId!, interaction.user.id, (eco.bank ?? 0) + cantidad);
+    }
 
     const updated = await getEconomy(interaction.guildId!, interaction.user.id);
     const embed = new EmbedBuilder()
@@ -79,13 +83,17 @@ export async function execute(interaction: ChatInputCommandInteraction) {
       await interaction.editReply({ content: `❌ No tienes suficientes monedas en el banco. Tienes ${formatCoins(eco.bank)}.` });
       return;
     }
-    await db
-      .update(userEconomyTable)
-      .set({
-        coins: sql`${userEconomyTable.coins} + ${cantidad}`,
-        bank: sql`${userEconomyTable.bank} - ${cantidad}`,
-      })
-      .where(and(eq(userEconomyTable.guildId, interaction.guildId!), eq(userEconomyTable.userId, interaction.user.id)));
+    try {
+      await db
+        .update(userEconomyTable)
+        .set({
+          coins: sql`${userEconomyTable.coins} + ${cantidad}`,
+          bank: sql`${userEconomyTable.bank} - ${cantidad}`,
+        })
+        .where(and(eq(userEconomyTable.guildId, interaction.guildId!), eq(userEconomyTable.userId, interaction.user.id)));
+    } catch {
+      await setBankJson(interaction.guildId!, interaction.user.id, (eco.bank ?? 0) - cantidad);
+    }
 
     const updated = await getEconomy(interaction.guildId!, interaction.user.id);
     const embed = new EmbedBuilder()
