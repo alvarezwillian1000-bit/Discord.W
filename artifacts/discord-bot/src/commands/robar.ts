@@ -1,7 +1,6 @@
 import { SlashCommandBuilder, type ChatInputCommandInteraction, EmbedBuilder } from "discord.js";
 import { getEconomy, addCoins, formatCoins, ROB_COOLDOWN_MS, formatCooldown } from "../utils/economy.js";
-import { db } from "@workspace/db";
-import { userEconomyTable } from "@workspace/db";
+import { db, userEconomyTable } from "@workspace/db";
 import { eq, and } from "drizzle-orm";
 
 export const data = new SlashCommandBuilder()
@@ -26,23 +25,25 @@ export async function execute(interaction: ChatInputCommandInteraction) {
   const eco = await getEconomy(interaction.guildId!, interaction.user.id);
   const now = Date.now();
 
-  if (eco.lastRobAt) {
-    const elapsed = now - eco.lastRobAt.getTime();
-    if (elapsed < ROB_COOLDOWN_MS) {
-      const embed = new EmbedBuilder()
-        .setColor(0xed4245)
-        .setTitle("🚔 Estás bajo vigilancia")
-        .setDescription(`La policía te tiene vigilado. Espera **${formatCooldown(ROB_COOLDOWN_MS - elapsed)}** antes de volver a robar.`)
-        .setTimestamp();
-      await interaction.editReply({ embeds: [embed] });
-      return;
-    }
+  const lastRob = eco.lastRobAt ? new Date(eco.lastRobAt).getTime() : 0;
+  if (lastRob && now - lastRob < ROB_COOLDOWN_MS) {
+    const embed = new EmbedBuilder()
+      .setColor(0xed4245)
+      .setTitle("🚔 Estás bajo vigilancia")
+      .setDescription(`La policía te tiene vigilado. Espera **${formatCooldown(ROB_COOLDOWN_MS - (now - lastRob))}** antes de volver a robar.`)
+      .setTimestamp();
+    await interaction.editReply({ embeds: [embed] });
+    return;
   }
 
-  await db
-    .update(userEconomyTable)
-    .set({ lastRobAt: new Date() })
-    .where(and(eq(userEconomyTable.guildId, interaction.guildId!), eq(userEconomyTable.userId, interaction.user.id)));
+  try {
+    await db
+      .update(userEconomyTable)
+      .set({ lastRobAt: new Date() })
+      .where(and(eq(userEconomyTable.guildId, interaction.guildId!), eq(userEconomyTable.userId, interaction.user.id)));
+  } catch {
+    // fallback
+  }
 
   const targetEco = await getEconomy(interaction.guildId!, target.id);
   const targetMember = await interaction.guild!.members.fetch(target.id).catch(() => null);
