@@ -1,10 +1,10 @@
-import { pool } from '@workspace/db';
-import { logger } from './utils/logger.js';
+import { pool, dbAvailable } from "@workspace/db";
+import { logger } from "./utils/logger.js";
 
-let dbAvailable = false;
+let dbIsReady = false;
 
 export function isDbAvailable() {
-  return dbAvailable;
+  return dbIsReady;
 }
 
 const TABLES: string[] = [
@@ -108,30 +108,37 @@ const TABLES: string[] = [
 ];
 
 export async function initDatabase(): Promise<void> {
-  const dbUrl = process.env.DATABASE_URL ?? '';
-  let host = '(desconocido)';
+  if (!dbAvailable || !pool) {
+    logger.info("DATABASE_URL no configurado. Usando JSON fallback para datos.");
+    dbIsReady = false;
+    return;
+  }
+
+  const dbUrl = process.env.DATABASE_URL ?? "";
+  let host = "(desconocido)";
   try {
     host = new URL(dbUrl).hostname;
   } catch {}
 
-  logger.info({ host }, 'Intentando conectar a la base de datos...');
+  logger.info({ host }, "Intentando conectar a la base de datos...");
 
   try {
-    // Test connectivity first
-    await pool.query('SELECT 1');
+    await pool.query("SELECT 1");
   } catch (err: any) {
-    if (err.code === 'ENOTFOUND' || err.code === 'ECONNREFUSED') {
+    if (err.code === "ENOTFOUND" || err.code === "ECONNREFUSED") {
       logger.error(
         { host, code: err.code },
-        '=== ERROR DE BASE DE DATOS ===' +
-        ' No se puede resolver el hostname de PostgreSQL.' +
-        ' En Railway, ve al servicio del bot -> Variables' +
-        ' y cambia DATABASE_URL por el valor de DATABASE_PUBLIC_URL' +
-        ' que encuentras en el servicio de Postgres.'
+        "=== ERROR DE BASE DE DATOS ===" +
+        " No se puede resolver el hostname de PostgreSQL." +
+        " En Railway, ve al servicio del bot -> Variables" +
+        " y cambia DATABASE_URL por el valor de DATABASE_PUBLIC_URL" +
+        " que encuentras en el servicio de Postgres."
       );
+      dbIsReady = false;
       return;
     }
-    logger.error({ err: err.message }, 'Error conectando a la base de datos');
+    logger.error({ err: err.message }, "Error conectando a la base de datos");
+    dbIsReady = false;
     return;
   }
 
@@ -140,12 +147,12 @@ export async function initDatabase(): Promise<void> {
     try {
       await pool.query(sql);
     } catch (err: any) {
-      if (err.code === '42P07') continue;
-      if (err.code === 'ENOTFOUND' || err.code === 'ECONNREFUSED') break;
-      logger.warn({ err: err.message }, 'Advertencia creando tabla');
+      if (err.code === "42P07") continue;
+      if (err.code === "ENOTFOUND" || err.code === "ECONNREFUSED") break;
+      logger.warn({ err: err.message }, "Advertencia creando tabla");
     }
   }
 
-  dbAvailable = true;
-  logger.info({ host }, 'Base de datos inicializada correctamente');
+  dbIsReady = true;
+  logger.info({ host }, "Base de datos inicializada correctamente");
 }
