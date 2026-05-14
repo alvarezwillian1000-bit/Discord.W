@@ -1,6 +1,6 @@
 import { readFileSync, writeFileSync, existsSync, mkdirSync } from "fs";
-import { dirname, join } from "path";
-import { logger } from "./utils/logger.js";
+import { join } from "path";
+import { logger } from "./logger.js";
 
 const DATA_DIR = process.env.JSON_DATA_DIR ?? "/app/data";
 
