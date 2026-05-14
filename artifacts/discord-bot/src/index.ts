@@ -11,113 +11,75 @@ export { logger };
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
 
-let client: Client | null = null;
+// Export client at module level so giveaways.ts and others can import it
+export const client = new Client({
+  intents: [
+    GatewayIntentBits.Guilds,
+    GatewayIntentBits.GuildMembers,
+    GatewayIntentBits.GuildMessages,
+    GatewayIntentBits.MessageContent,
+    GatewayIntentBits.GuildMessageReactions,
+  ],
+});
 
-try {
-  client = new Client({
-    intents: [
-      GatewayIntentBits.Guilds,
-      GatewayIntentBits.GuildMembers,
-      GatewayIntentBits.GuildMessages,
-      GatewayIntentBits.MessageContent,
-      GatewayIntentBits.GuildMessageReactions,
-    ],
-  });
-  (client as any).commands = new Collection();
-} catch (err) {
-  logger.error(err, "Error creando cliente de Discord");
-  process.exit(1);
-}
+(client as any).commands = new Collection();
 
 async function loadCommands() {
-  try {
-    const commandsPath = join(__dirname, "commands");
-    if (!existsSyncCheck(commandsPath)) {
-      logger.warn("No se encontró directorio de comandos");
-      return;
-    }
-    const commandFiles = readdirSync(commandsPath).filter(
-      (f) => f.endsWith(".ts") || f.endsWith(".js")
-    );
-    for (const file of commandFiles) {
-      try {
-        const filePath = pathToFileURL(join(commandsPath, file)).href;
-        const command = await import(filePath);
-        if ("data" in command && "execute" in command) {
-          (client as any).commands.set(command.data.name, command);
-        }
-      } catch (err) {
-        logger.error({ err, file }, "Error cargando comando");
+  const commandsPath = join(__dirname, "commands");
+  const commandFiles = readdirSync(commandsPath).filter(
+    (f) => f.endsWith(".ts") || f.endsWith(".js")
+  );
+  for (const file of commandFiles) {
+    try {
+      const filePath = pathToFileURL(join(commandsPath, file)).href;
+      const command = await import(filePath);
+      if ("data" in command && "execute" in command) {
+        (client as any).commands.set(command.data.name, command);
       }
+    } catch (err) {
+      logger.error({ err, file }, "Error cargando comando");
     }
-  } catch (err) {
-    logger.error(err, "Error en loadCommands");
   }
 }
 
 async function loadEvents() {
-  try {
-    const eventsPath = join(__dirname, "events");
-    if (!existsSyncCheck(eventsPath)) {
-      logger.warn("No se encontró directorio de eventos");
-      return;
-    }
-    const eventFiles = readdirSync(eventsPath).filter(
-      (f) => f.endsWith(".ts") || f.endsWith(".js")
-    );
-    for (const file of eventFiles) {
-      try {
-        const filePath = pathToFileURL(join(eventsPath, file)).href;
-        const event = await import(filePath);
-        if (event.once) {
-          client!.once(event.name, (...args: unknown[]) => {
-            try {
-              event.execute(...args);
-            } catch (err) {
-              logger.error({ err, file }, "Error en evento once");
-            }
+  const eventsPath = join(__dirname, "events");
+  const eventFiles = readdirSync(eventsPath).filter(
+    (f) => f.endsWith(".ts") || f.endsWith(".js")
+  );
+  for (const file of eventFiles) {
+    try {
+      const filePath = pathToFileURL(join(eventsPath, file)).href;
+      const event = await import(filePath);
+      if (event.once) {
+        client.once(event.name, (...args: unknown[]) => {
+          Promise.resolve(event.execute(...args)).catch((err) => {
+            logger.error({ err, file }, "Error en evento once");
           });
-        } else {
-          client!.on(event.name, (...args: unknown[]) => {
-            try {
-              event.execute(...args);
-            } catch (err) {
-              logger.error({ err, file }, "Error en evento");
-            }
+        });
+      } else {
+        client.on(event.name, (...args: unknown[]) => {
+          Promise.resolve(event.execute(...args)).catch((err) => {
+            logger.error({ err, file }, "Error en evento");
           });
-        }
-      } catch (err) {
-        logger.error({ err, file }, "Error cargando evento");
+        });
       }
+    } catch (err) {
+      logger.error({ err, file }, "Error cargando evento");
     }
-  } catch (err) {
-    logger.error(err, "Error en loadEvents");
-  }
-}
-
-function existsSyncCheck(p: string) {
-  try {
-    return readdirSync(p) !== undefined;
-  } catch {
-    return false;
   }
 }
 
 function startHealthServer() {
   const port = parseInt(process.env.PORT ?? "8082", 10);
   const server = createServer((req, res) => {
-    if (req.url === "/healthz" || req.url === "/discord-bot/healthz") {
-      res.writeHead(200, { "Content-Type": "application/json" });
-      res.end(
-        JSON.stringify({
-          status: "ok",
-          bot: client?.user?.tag ?? "connecting",
-        })
-      );
-    } else {
-      res.writeHead(200, { "Content-Type": "application/json" });
-      res.end(JSON.stringify({ status: "ok" }));
-    }
+    res.writeHead(200, { "Content-Type": "application/json" });
+    res.end(
+      JSON.stringify({
+        status: "ok",
+        bot: client.user?.tag ?? "connecting",
+      })
+    );
   });
   server.listen(port, "0.0.0.0", () => {
     logger.info(`Health server escuchando en puerto ${port}`);
@@ -127,29 +89,23 @@ function startHealthServer() {
 async function main() {
   const token = process.env.DISCORD_TOKEN;
   if (!token) {
-    logger.error("DISCORD_TOKEN no está configurado.");
+    logger.error("DISCORD_TOKEN no esta configurado.");
     process.exit(1);
   }
 
-  // Start health server FIRST (before any blocking operations)
+  // Start health server FIRST so Railway doesn't kill us during DB connection
   startHealthServer();
 
-  // Initialize DB in the background (non-blocking)
+  // Init DB non-blocking — fallback to JSON if Postgres unavailable
   initDatabase().catch((err) => {
     logger.error(err, "Error en initDatabase (no fatal)");
   });
 
   await loadCommands();
   await loadEvents();
-
-  if (!client) {
-    logger.error("Cliente de Discord no inicializado");
-    process.exit(1);
-  }
   await client.login(token);
 }
 
-// Always start — remove isMain check that may fail under tsx
 main().catch((err) => {
   logger.error(err, "Error fatal al iniciar el bot");
   process.exit(1);
