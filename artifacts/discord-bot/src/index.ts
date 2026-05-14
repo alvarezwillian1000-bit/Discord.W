@@ -4,6 +4,7 @@ import { fileURLToPath, pathToFileURL } from "url";
 import { dirname, join } from "path";
 import { createServer } from "http";
 import { logger } from "./utils/logger.js";
+import { initDatabase } from "./init-db.js";
 
 export { logger };
 
@@ -75,6 +76,7 @@ async function main() {
     process.exit(1);
   }
 
+  await initDatabase();
   startHealthServer();
   await loadCommands();
   await loadEvents();
