@@ -76,8 +76,14 @@ async function main() {
     process.exit(1);
   }
 
-  await initDatabase();
+  // Start health server FIRST (before any blocking DB operations)
   startHealthServer();
+
+  // Initialize DB in the background (non-blocking)
+  initDatabase().catch((err) => {
+    logger.error(err, "Error en initDatabase (no fatal)");
+  });
+
   await loadCommands();
   await loadEvents();
   await client.login(token);
