@@ -14,10 +14,10 @@ import {
 import { getGuildConfig } from "../utils/config.js";
 import { getRobloxUser } from "../utils/roblox.js";
 import { activeGiveaways, buildGiveawayEmbed } from "../utils/giveaways.js";
-import { db } from "@workspace/db";
-import { verificationsTable, ticketsTable } from "@workspace/db";
+import { db, verificationsTable, ticketsTable } from "@workspace/db";
 import { eq } from "drizzle-orm";
 import { logger } from "../utils/logger.js";
+import { addVerificationJson, addTicketJson, closeTicketJson } from "../utils/db-json.js";
 
 export const name = Events.InteractionCreate;
 export const once = false;
@@ -100,13 +100,16 @@ export async function execute(interaction: Interaction) {
         .setTimestamp();
       await interaction.reply({ embeds: [embed] });
 
-      // Marcar ticket como cerrado en DB
+      // Marcar ticket como cerrado en DB o JSON
       const channelId = interaction.channel.id;
-      await db
-        .update(ticketsTable)
-        .set({ status: "closed", closedAt: new Date() })
-        .where(eq(ticketsTable.channelId, channelId))
-        .catch(() => {});
+      try {
+        await db
+          .update(ticketsTable)
+          .set({ status: "closed", closedAt: new Date() })
+          .where(eq(ticketsTable.channelId, channelId));
+      } catch {
+        await closeTicketJson(channelId);
+      }
 
       setTimeout(() => interaction.channel?.delete().catch(() => {}), 5000);
       return;
@@ -198,18 +201,26 @@ export async function execute(interaction: Interaction) {
         roleMention = "\n⚠️ No hay rol verificado configurado. Un admin debe usar `/setup-bienvenida`.";
       }
 
-      // Guardar verificación en DB
-      await db
-        .insert(verificationsTable)
-        .values({
+      // Guardar verificación en DB o JSON
+      try {
+        await db.insert(verificationsTable).values({
           guildId: interaction.guildId!,
           discordUserId: interaction.user.id,
           discordUserTag: interaction.user.tag,
           robloxUsername: roblox.name,
           robloxUserId: String(roblox.id),
           robloxProfileUrl: roblox.profileUrl,
-        })
-        .catch((e) => logger.error(e, "Error guardando verificación en DB"));
+        });
+      } catch {
+        await addVerificationJson({
+          guildId: interaction.guildId!,
+          discordUserId: interaction.user.id,
+          discordUserTag: interaction.user.tag,
+          robloxUsername: roblox.name,
+          robloxUserId: String(roblox.id),
+          robloxProfileUrl: roblox.profileUrl,
+        });
+      }
 
       const embed = new EmbedBuilder()
         .setColor(0x57f287)
@@ -292,10 +303,9 @@ export async function execute(interaction: Interaction) {
         components: [new ActionRowBuilder<ButtonBuilder>().addComponents(closeButton)],
       });
 
-      // Guardar ticket en DB
-      await db
-        .insert(ticketsTable)
-        .values({
+      // Guardar ticket en DB o JSON
+      try {
+        await db.insert(ticketsTable).values({
           guildId: guild.id,
           channelId: ticketChannel.id,
           discordUserId: interaction.user.id,
@@ -304,8 +314,19 @@ export async function execute(interaction: Interaction) {
           robloxProfileUrl: roblox?.profileUrl ?? null,
           reason,
           status: "open",
-        })
-        .catch((e) => logger.error(e, "Error guardando ticket en DB"));
+        });
+      } catch {
+        await addTicketJson({
+          guildId: guild.id,
+          channelId: ticketChannel.id,
+          discordUserId: interaction.user.id,
+          discordUserTag: interaction.user.tag,
+          robloxUsername: robloxName,
+          robloxProfileUrl: roblox?.profileUrl ?? null,
+          reason,
+          status: "open",
+        });
+      }
 
       await interaction.editReply({
         content: `✅ Tu ticket fue creado en ${ticketChannel}. El staff te atenderá pronto.`,
