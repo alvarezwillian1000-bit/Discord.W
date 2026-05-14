@@ -1,7 +1,11 @@
-import { db } from "@workspace/db";
-import { userLevelsTable } from "@workspace/db";
+import { db, userLevelsTable } from "@workspace/db";
 import { eq, and, desc, sql } from "drizzle-orm";
 import { logger } from "../utils/logger.js";
+import {
+  getLevelJson,
+  updateLevelJson,
+  getLevelLeaderboardJson,
+} from "./db-json.js";
 
 export function xpForNextLevel(level: number): number {
   return 5 * level * level + 50 * level + 100;
@@ -108,66 +112,113 @@ export async function handleMessageXP(
     if (newLevel > prevLevel && onLevelUp) {
       onLevelUp(newLevel, newXP);
     }
-  } catch (err) {
-    logger.error(err, "Error procesando XP de mensaje");
+  } catch {
+    // JSON fallback
+    const row = await getLevelJson(guildId, userId);
+    const now = new Date();
+    if (row.lastXpAt) {
+      const last = new Date(row.lastXpAt).getTime();
+      if (now.getTime() - last < XP_COOLDOWN_MS) {
+        await updateLevelJson(guildId, userId, { totalMessages: (row.totalMessages ?? 0) + 1 });
+        return;
+      }
+    }
+    const gain = Math.floor(Math.random() * (XP_MAX - XP_MIN + 1)) + XP_MIN;
+    const prevXP = row.xp ?? 0;
+    const newXP = prevXP + gain;
+    const prevLevel = getLevelFromXP(prevXP);
+    const newLevel = getLevelFromXP(newXP);
+    await updateLevelJson(guildId, userId, {
+      xp: newXP,
+      level: newLevel,
+      totalMessages: (row.totalMessages ?? 0) + 1,
+      lastXpAt: now.toISOString(),
+    });
+    if (newLevel > prevLevel && onLevelUp) {
+      onLevelUp(newLevel, newXP);
+    }
   }
 }
 
 export async function getUserLevel(guildId: string, userId: string) {
-  const [row] = await db
-    .select()
-    .from(userLevelsTable)
-    .where(and(eq(userLevelsTable.guildId, guildId), eq(userLevelsTable.userId, userId)))
-    .limit(1);
-  return row ?? null;
+  try {
+    const [row] = await db
+      .select()
+      .from(userLevelsTable)
+      .where(and(eq(userLevelsTable.guildId, guildId), eq(userLevelsTable.userId, userId)))
+      .limit(1);
+    return row ?? null;
+  } catch {
+    return await getLevelJson(guildId, userId);
+  }
 }
 
 export async function getLeaderboard(guildId: string, limit = 10) {
-  return db
-    .select()
-    .from(userLevelsTable)
-    .where(eq(userLevelsTable.guildId, guildId))
-    .orderBy(desc(userLevelsTable.xp))
-    .limit(limit);
+  try {
+    return db
+      .select()
+      .from(userLevelsTable)
+      .where(eq(userLevelsTable.guildId, guildId))
+      .orderBy(desc(userLevelsTable.xp))
+      .limit(limit);
+  } catch {
+    return await getLevelLeaderboardJson(guildId, limit);
+  }
 }
 
 export async function getRank(guildId: string, userId: string): Promise<number> {
-  const result = await db.execute(sql`
-    SELECT COUNT(*)::int AS rank
-    FROM user_levels
-    WHERE guild_id = ${guildId}
-      AND xp > (
-        SELECT COALESCE(xp, 0)
-        FROM user_levels
-        WHERE guild_id = ${guildId} AND user_id = ${userId}
-        LIMIT 1
-      )
-  `);
-  return ((result.rows[0] as any)?.rank ?? 0) + 1;
+  try {
+    const result = await db.execute(sql`
+      SELECT COUNT(*)::int AS rank
+      FROM user_levels
+      WHERE guild_id = ${guildId}
+        AND xp > (
+          SELECT COALESCE(xp, 0)
+          FROM user_levels
+          WHERE guild_id = ${guildId} AND user_id = ${userId}
+          LIMIT 1
+        )
+    `);
+    return ((result.rows[0] as any)?.rank ?? 0) + 1;
+  } catch {
+    const all = await getLevelLeaderboardJson(guildId, 9999);
+    const idx = all.findIndex((e: any) => e.userId === userId);
+    return idx >= 0 ? idx + 1 : all.length + 1;
+  }
 }
 
 export async function addXP(guildId: string, userId: string, amount: number): Promise<{ newXP: number; newLevel: number; leveledUp: boolean }> {
-  const [row] = await db
-    .select()
-    .from(userLevelsTable)
-    .where(and(eq(userLevelsTable.guildId, guildId), eq(userLevelsTable.userId, userId)))
-    .limit(1);
+  try {
+    const [row] = await db
+      .select()
+      .from(userLevelsTable)
+      .where(and(eq(userLevelsTable.guildId, guildId), eq(userLevelsTable.userId, userId)))
+      .limit(1);
 
-  const prevXP = row?.xp ?? 0;
-  const newXP = Math.max(0, prevXP + amount);
-  const prevLevel = getLevelFromXP(prevXP);
-  const newLevel = getLevelFromXP(newXP);
+    const prevXP = row?.xp ?? 0;
+    const newXP = Math.max(0, prevXP + amount);
+    const prevLevel = getLevelFromXP(prevXP);
+    const newLevel = getLevelFromXP(newXP);
 
-  if (row) {
-    await db
-      .update(userLevelsTable)
-      .set({ xp: newXP, level: newLevel })
-      .where(eq(userLevelsTable.id, row.id));
-  } else {
-    await db.insert(userLevelsTable).values({
-      guildId, userId, xp: newXP, level: newLevel, totalMessages: 0,
-    });
+    if (row) {
+      await db
+        .update(userLevelsTable)
+        .set({ xp: newXP, level: newLevel })
+        .where(eq(userLevelsTable.id, row.id));
+    } else {
+      await db.insert(userLevelsTable).values({
+        guildId, userId, xp: newXP, level: newLevel, totalMessages: 0,
+      });
+    }
+
+    return { newXP, newLevel, leveledUp: newLevel > prevLevel };
+  } catch {
+    const row = await getLevelJson(guildId, userId);
+    const prevXP = row.xp ?? 0;
+    const newXP = Math.max(0, prevXP + amount);
+    const prevLevel = getLevelFromXP(prevXP);
+    const newLevel = getLevelFromXP(newXP);
+    await updateLevelJson(guildId, userId, { xp: newXP, level: newLevel });
+    return { newXP, newLevel, leveledUp: newLevel > prevLevel };
   }
-
-  return { newXP, newLevel, leveledUp: newLevel > prevLevel };
 }
