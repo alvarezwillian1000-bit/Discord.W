@@ -1,7 +1,13 @@
-import { pool } from "@workspace/db";
-import { logger } from "./utils/logger.js";
+import { pool } from '@workspace/db';
+import { logger } from './utils/logger.js';
 
-const TABLES = [
+let dbAvailable = false;
+
+export function isDbAvailable() {
+  return dbAvailable;
+}
+
+const TABLES: string[] = [
   `CREATE TABLE IF NOT EXISTS guild_config (
     guild_id text PRIMARY KEY,
     welcome_channel_id text,
@@ -101,14 +107,45 @@ const TABLES = [
   )`,
 ];
 
-export async function initDatabase() {
+export async function initDatabase(): Promise<void> {
+  const dbUrl = process.env.DATABASE_URL ?? '';
+  let host = '(desconocido)';
+  try {
+    host = new URL(dbUrl).hostname;
+  } catch {}
+
+  logger.info({ host }, 'Intentando conectar a la base de datos...');
+
+  try {
+    // Test connectivity first
+    await pool.query('SELECT 1');
+  } catch (err: any) {
+    if (err.code === 'ENOTFOUND' || err.code === 'ECONNREFUSED') {
+      logger.error(
+        { host, code: err.code },
+        '=== ERROR DE BASE DE DATOS ===' +
+        ' No se puede resolver el hostname de PostgreSQL.' +
+        ' En Railway, ve al servicio del bot -> Variables' +
+        ' y cambia DATABASE_URL por el valor de DATABASE_PUBLIC_URL' +
+        ' que encuentras en el servicio de Postgres.'
+      );
+      return;
+    }
+    logger.error({ err: err.message }, 'Error conectando a la base de datos');
+    return;
+  }
+
+  // Create tables
   for (const sql of TABLES) {
     try {
       await pool.query(sql);
     } catch (err: any) {
-      if (err.code === "42P07") continue;
-      logger.error({ err: err.message }, "Error creando tabla");
+      if (err.code === '42P07') continue;
+      if (err.code === 'ENOTFOUND' || err.code === 'ECONNREFUSED') break;
+      logger.warn({ err: err.message }, 'Advertencia creando tabla');
     }
   }
-  logger.info("Base de datos inicializada correctamente");
+
+  dbAvailable = true;
+  logger.info({ host }, 'Base de datos inicializada correctamente');
 }
