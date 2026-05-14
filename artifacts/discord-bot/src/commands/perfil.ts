@@ -3,11 +3,11 @@ import {
   type ChatInputCommandInteraction,
   EmbedBuilder,
 } from "discord.js";
-import { db } from "@workspace/db";
-import { warningsTable, verificationsTable } from "@workspace/db";
+import { db, warningsTable, verificationsTable } from "@workspace/db";
 import { eq, and, count } from "drizzle-orm";
 import { getUserLevel, getXPProgress, buildProgressBar, getLevelColor, getLevelTier } from "../utils/levels.js";
 import { getEconomy, formatCoins } from "../utils/economy.js";
+import { getWarningsJson, getGuildConfigJson } from "../utils/db-json.js";
 
 export const data = new SlashCommandBuilder()
   .setName("perfil")
@@ -25,21 +25,30 @@ export async function execute(interaction: ChatInputCommandInteraction) {
 
   await interaction.deferReply();
 
-  const [warnResult, verifs, levelRow, eco] = await Promise.all([
-    db.select({ total: count() }).from(warningsTable)
-      .where(and(eq(warningsTable.guildId, interaction.guildId!), eq(warningsTable.userId, target.id)))
-      .then((r) => r[0]),
-    db.select().from(verificationsTable)
+  let warnTotal = 0;
+  let robloxInfo = "No verificado";
+
+  try {
+    const [warnResult] = await db.select({ total: count() }).from(warningsTable)
+      .where(and(eq(warningsTable.guildId, interaction.guildId!), eq(warningsTable.userId, target.id)));
+    warnTotal = warnResult?.total ?? 0;
+  } catch {
+    const warns = await getWarningsJson(interaction.guildId!, target.id);
+    warnTotal = warns.length;
+  }
+
+  try {
+    const verifs = await db.select().from(verificationsTable)
       .where(eq(verificationsTable.discordUserId, target.id))
       .orderBy(verificationsTable.createdAt)
-      .limit(1),
-    getUserLevel(interaction.guildId!, target.id),
-    getEconomy(interaction.guildId!, target.id),
-  ]);
+      .limit(1);
+    if (verifs.length > 0) robloxInfo = `[${verifs[0].robloxUsername}](${verifs[0].robloxProfileUrl})`;
+  } catch {
+    // leave as "No verificado"
+  }
 
-  const robloxInfo = verifs.length > 0
-    ? `[${verifs[0].robloxUsername}](${verifs[0].robloxProfileUrl})`
-    : "No verificado";
+  const levelRow = await getUserLevel(interaction.guildId!, target.id);
+  const eco = await getEconomy(interaction.guildId!, target.id);
 
   const topRole = [...member.roles.cache.values()]
     .filter((r) => r.id !== interaction.guild!.roles.everyone.id)
@@ -55,12 +64,12 @@ export async function execute(interaction: ChatInputCommandInteraction) {
     .setTitle(`👤 Perfil de ${member.displayName}`)
     .setThumbnail(member.displayAvatarURL({ size: 256 }))
     .addFields(
-      { name: "🏷️ Tag", value: target.tag, inline: true },
+      { name: "🇿 Tag", value: target.tag, inline: true },
       { name: "🆔 ID", value: target.id, inline: true },
       { name: "📅 En el servidor desde", value: member.joinedAt ? `<t:${Math.floor(member.joinedAt.getTime() / 1000)}:R>` : "?", inline: true },
       { name: "🎮 Roblox", value: robloxInfo, inline: true },
       { name: "🎭 Rol principal", value: topRole ? `<@&${topRole.id}>` : "Ninguno", inline: true },
-      { name: "⚠️ Advertencias", value: String(warnResult?.total ?? 0), inline: true },
+      { name: "⚠️ Advertencias", value: String(warnTotal), inline: true },
       {
         name: `✨ Nivel ${xpData?.level ?? 0} — ${tier}`,
         value: xpData
