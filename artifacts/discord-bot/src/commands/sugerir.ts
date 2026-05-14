@@ -1,7 +1,7 @@
 import { SlashCommandBuilder, type ChatInputCommandInteraction, EmbedBuilder } from "discord.js";
 import { getGuildConfig } from "../utils/config.js";
-import { db } from "@workspace/db";
-import { suggestionsTable } from "@workspace/db";
+import { db, suggestionsTable } from "@workspace/db";
+import { addSuggestionJson } from "../utils/db-json.js";
 
 export const data = new SlashCommandBuilder()
   .setName("sugerir")
@@ -42,14 +42,25 @@ export async function execute(interaction: ChatInputCommandInteraction) {
   await msg.react("✅");
   await msg.react("❌");
 
-  await db.insert(suggestionsTable).values({
-    guildId: interaction.guildId!,
-    messageId: msg.id,
-    channelId: canal.id,
-    discordUserId: interaction.user.id,
-    discordUserTag: interaction.user.tag,
-    content: texto,
-  });
+  try {
+    await db.insert(suggestionsTable).values({
+      guildId: interaction.guildId!,
+      messageId: msg.id,
+      channelId: canal.id,
+      discordUserId: interaction.user.id,
+      discordUserTag: interaction.user.tag,
+      content: texto,
+    });
+  } catch {
+    await addSuggestionJson({
+      guildId: interaction.guildId!,
+      messageId: msg.id,
+      channelId: canal.id,
+      discordUserId: interaction.user.id,
+      discordUserTag: interaction.user.tag,
+      content: texto,
+    });
+  }
 
   await interaction.reply({ content: `✅ Tu sugerencia fue enviada a ${canal}. ¡Gracias!`, ephemeral: true });
 }
