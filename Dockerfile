@@ -13,6 +13,6 @@ COPY artifacts/discord-bot ./artifacts/discord-bot
 # Install ALL workspace dependencies (including root devDeps like tsx)
 RUN pnpm install --frozen-lockfile 2>/dev/null || pnpm install --no-frozen-lockfile
 
-WORKDIR /app
+WORKDIR /app/artifacts/discord-bot
 
-CMD ["sh", "-c", "pnpm --filter @workspace/db run push && pnpm --filter @workspace/discord-bot run start"]
+CMD ["pnpm", "run", "start"]
