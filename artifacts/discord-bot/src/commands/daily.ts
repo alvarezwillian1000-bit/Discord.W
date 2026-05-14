@@ -1,8 +1,8 @@
 import { SlashCommandBuilder, type ChatInputCommandInteraction, EmbedBuilder } from "discord.js";
 import { getEconomy, addCoins, formatCoins, DAILY_COOLDOWN_MS, formatCooldown } from "../utils/economy.js";
-import { db } from "@workspace/db";
-import { userEconomyTable } from "@workspace/db";
+import { db, userEconomyTable } from "@workspace/db";
 import { eq, and } from "drizzle-orm";
+import { getEconomyJson, addCoinsJson } from "../utils/db-json.js";
 
 const DAILY_MIN = 100;
 const DAILY_MAX = 500;
@@ -28,29 +28,32 @@ export async function execute(interaction: ChatInputCommandInteraction) {
   const eco = await getEconomy(interaction.guildId!, interaction.user.id);
   const now = Date.now();
 
-  if (eco.lastDailyAt) {
-    const elapsed = now - eco.lastDailyAt.getTime();
-    if (elapsed < DAILY_COOLDOWN_MS) {
-      const remaining = DAILY_COOLDOWN_MS - elapsed;
-      const embed = new EmbedBuilder()
-        .setColor(0xed4245)
-        .setTitle("⏰ Daily en cooldown")
-        .setDescription(`Ya recogiste tu daily. Vuelve en **${formatCooldown(remaining)}**.`)
-        .setFooter({ text: "¡Vuelve mañana para más monedas!" })
-        .setTimestamp();
-      await interaction.editReply({ embeds: [embed] });
-      return;
-    }
+  const lastDaily = eco.lastDailyAt ? new Date(eco.lastDailyAt).getTime() : 0;
+  if (lastDaily && now - lastDaily < DAILY_COOLDOWN_MS) {
+    const remaining = DAILY_COOLDOWN_MS - (now - lastDaily);
+    const embed = new EmbedBuilder()
+      .setColor(0xed4245)
+      .setTitle("⏰ Daily en cooldown")
+      .setDescription(`Ya recogiste tu daily. Vuelve en **${formatCooldown(remaining)}**.`)
+      .setFooter({ text: "¡Vuelve mañana para más monedas!" })
+      .setTimestamp();
+    await interaction.editReply({ embeds: [embed] });
+    return;
   }
 
   const earned = Math.floor(Math.random() * (DAILY_MAX - DAILY_MIN + 1)) + DAILY_MIN;
   const msg = DAILY_MSGS[Math.floor(Math.random() * DAILY_MSGS.length)];
 
   await addCoins(interaction.guildId!, interaction.user.id, earned);
-  await db
-    .update(userEconomyTable)
-    .set({ lastDailyAt: new Date() })
-    .where(and(eq(userEconomyTable.guildId, interaction.guildId!), eq(userEconomyTable.userId, interaction.user.id)));
+
+  try {
+    await db
+      .update(userEconomyTable)
+      .set({ lastDailyAt: new Date() })
+      .where(and(eq(userEconomyTable.guildId, interaction.guildId!), eq(userEconomyTable.userId, interaction.user.id)));
+  } catch {
+    // JSON fallback already updated via addCoinsJson
+  }
 
   const updated = await getEconomy(interaction.guildId!, interaction.user.id);
 
