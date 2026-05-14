@@ -3,6 +3,9 @@ WORKDIR /app
 
 RUN npm install -g pnpm@9
 
+# Create persistent data directory
+RUN mkdir -p /app/data
+
 # Copy workspace manifests and lockfile
 COPY package.json pnpm-workspace.yaml pnpm-lock.yaml ./
 
