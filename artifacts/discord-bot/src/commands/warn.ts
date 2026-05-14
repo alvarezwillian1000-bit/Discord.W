@@ -5,9 +5,13 @@ import {
   EmbedBuilder,
 } from "discord.js";
 import { hasPermission } from "../utils/permissions.js";
-import { db } from "@workspace/db";
-import { warningsTable } from "@workspace/db";
+import { db, warningsTable } from "@workspace/db";
 import { eq, and } from "drizzle-orm";
+import {
+  addWarningJson,
+  getWarningsJson,
+  clearWarningsJson,
+} from "../utils/db-json.js";
 
 export const data = new SlashCommandBuilder()
   .setName("warn")
@@ -46,17 +50,18 @@ export async function execute(interaction: ChatInputCommandInteraction) {
   if (sub === "dar") {
     const razon = interaction.options.getString("razon", true);
 
-    await db.insert(warningsTable).values({
-      guildId,
-      userId: targetUser.id,
-      moderatorTag: interaction.user.tag,
-      reason: razon,
-    });
+    try {
+      await db.insert(warningsTable).values({
+        guildId,
+        userId: targetUser.id,
+        moderatorTag: interaction.user.tag,
+        reason: razon,
+      });
+    } catch {
+      await addWarningJson(guildId, targetUser.id, interaction.user.tag, razon);
+    }
 
-    const warns = await db
-      .select()
-      .from(warningsTable)
-      .where(and(eq(warningsTable.guildId, guildId), eq(warningsTable.userId, targetUser.id)));
+    const warns = await getWarnings(guildId, targetUser.id);
 
     const embed = new EmbedBuilder()
       .setColor(0xfee75c)
@@ -86,10 +91,7 @@ export async function execute(interaction: ChatInputCommandInteraction) {
 
     await interaction.reply({ embeds: [embed] });
   } else if (sub === "ver") {
-    const warns = await db
-      .select()
-      .from(warningsTable)
-      .where(and(eq(warningsTable.guildId, guildId), eq(warningsTable.userId, targetUser.id)));
+    const warns = await getWarnings(guildId, targetUser.id);
 
     const embed = new EmbedBuilder()
       .setColor(0x5865f2)
@@ -109,9 +111,13 @@ export async function execute(interaction: ChatInputCommandInteraction) {
 
     await interaction.reply({ embeds: [embed], ephemeral: true });
   } else if (sub === "limpiar") {
-    await db
-      .delete(warningsTable)
-      .where(and(eq(warningsTable.guildId, guildId), eq(warningsTable.userId, targetUser.id)));
+    try {
+      await db
+        .delete(warningsTable)
+        .where(and(eq(warningsTable.guildId, guildId), eq(warningsTable.userId, targetUser.id)));
+    } catch {
+      await clearWarningsJson(guildId, targetUser.id);
+    }
 
     await interaction.reply({
       embeds: [
@@ -123,5 +129,16 @@ export async function execute(interaction: ChatInputCommandInteraction) {
       ],
       ephemeral: true,
     });
+  }
+}
+
+async function getWarnings(guildId: string, userId: string) {
+  try {
+    return await db
+      .select()
+      .from(warningsTable)
+      .where(and(eq(warningsTable.guildId, guildId), eq(warningsTable.userId, userId)));
+  } catch {
+    return await getWarningsJson(guildId, userId);
   }
 }
