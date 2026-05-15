@@ -2,7 +2,7 @@ import { SlashCommandBuilder, type ChatInputCommandInteraction, EmbedBuilder } f
 import { getEconomy, formatCoins } from "../utils/economy.js";
 import { db, userEconomyTable } from "@workspace/db";
 import { eq, and, sql } from "drizzle-orm";
-import { setBankJson } from "../utils/db-json.js";
+import { setBankJson, addCoinsJson } from "../utils/db-json.js";
 
 export const data = new SlashCommandBuilder()
   .setName("banco")
@@ -12,7 +12,7 @@ export const data = new SlashCommandBuilder()
       .setName("depositar")
       .setDescription("Deposita monedas en el banco (protegidas de robos)")
       .addIntegerOption((o) =>
-        o.setName("cantidad").setDescription("Cantidad a depositar (o 'todo')").setRequired(true).setMinValue(1)
+        o.setName("cantidad").setDescription("Cantidad a depositar").setRequired(true).setMinValue(1)
       )
   )
   .addSubcommand((sub) =>
@@ -31,7 +31,9 @@ export async function execute(interaction: ChatInputCommandInteraction) {
   await interaction.deferReply({ ephemeral: true });
 
   const sub = interaction.options.getSubcommand();
-  const eco = await getEconomy(interaction.guildId!, interaction.user.id);
+  const guildId = interaction.guildId!;
+  const userId = interaction.user.id;
+  const eco = await getEconomy(guildId, userId);
 
   if (sub === "ver") {
     const embed = new EmbedBuilder()
@@ -62,12 +64,14 @@ export async function execute(interaction: ChatInputCommandInteraction) {
           coins: sql`${userEconomyTable.coins} - ${cantidad}`,
           bank: sql`${userEconomyTable.bank} + ${cantidad}`,
         })
-        .where(and(eq(userEconomyTable.guildId, interaction.guildId!), eq(userEconomyTable.userId, interaction.user.id)));
+        .where(and(eq(userEconomyTable.guildId, guildId), eq(userEconomyTable.userId, userId)));
     } catch {
-      await setBankJson(interaction.guildId!, interaction.user.id, (eco.bank ?? 0) + cantidad);
+      // JSON fallback: subtract from wallet AND add to bank
+      await addCoinsJson(guildId, userId, -cantidad);
+      await setBankJson(guildId, userId, (eco.bank ?? 0) + cantidad);
     }
 
-    const updated = await getEconomy(interaction.guildId!, interaction.user.id);
+    const updated = await getEconomy(guildId, userId);
     const embed = new EmbedBuilder()
       .setColor(0x57f287)
       .setTitle("🏦 Depósito realizado")
@@ -90,12 +94,13 @@ export async function execute(interaction: ChatInputCommandInteraction) {
           coins: sql`${userEconomyTable.coins} + ${cantidad}`,
           bank: sql`${userEconomyTable.bank} - ${cantidad}`,
         })
-        .where(and(eq(userEconomyTable.guildId, interaction.guildId!), eq(userEconomyTable.userId, interaction.user.id)));
+        .where(and(eq(userEconomyTable.guildId, guildId), eq(userEconomyTable.userId, userId)));
     } catch {
-      await setBankJson(interaction.guildId!, interaction.user.id, (eco.bank ?? 0) - cantidad);
+      await addCoinsJson(guildId, userId, cantidad);
+      await setBankJson(guildId, userId, (eco.bank ?? 0) - cantidad);
     }
 
-    const updated = await getEconomy(interaction.guildId!, interaction.user.id);
+    const updated = await getEconomy(guildId, userId);
     const embed = new EmbedBuilder()
       .setColor(0xffd700)
       .setTitle("🏦 Retiro realizado")
