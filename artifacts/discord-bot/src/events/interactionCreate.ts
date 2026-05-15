@@ -30,10 +30,10 @@ export async function execute(interaction: Interaction) {
     try {
       await command.execute(interaction);
     } catch (err) {
-      logger.error(err, "Error ejecutando comando");
-      const msg = { content: "❌ Ocurrió un error ejecutando este comando.", ephemeral: true };
-      if (interaction.replied || interaction.deferred) await interaction.followUp(msg);
-      else await interaction.reply(msg);
+      logger.error(err, `Error ejecutando comando /${interaction.commandName}`);
+      const msg = { content: "❌ Ocurrió un error ejecutando este comando. Inténtalo de nuevo.", ephemeral: true };
+      if (interaction.replied || interaction.deferred) await interaction.followUp(msg).catch(() => {});
+      else await interaction.reply(msg).catch(() => {});
     }
     return;
   }
@@ -42,7 +42,7 @@ export async function execute(interaction: Interaction) {
   if (interaction.isButton()) {
 
     // — Verificación v1 (bienvenida para nuevos) —
-    if (interaction.customId.startsWith("verify_")) {
+    if (interaction.customId.startsWith("verify_") && !interaction.customId.startsWith("verify2")) {
       const targetUserId = interaction.customId.split("_")[1];
       if (interaction.user.id !== targetUserId) {
         await interaction.reply({ content: "❌ Este botón de verificación no es tuyo.", ephemeral: true });
@@ -63,7 +63,7 @@ export async function execute(interaction: Interaction) {
       return;
     }
 
-    // — Verificación v2 (para todos los usuarios del servidor) —
+    // — Verificación v2 (para todos los usuarios del servidor) — muestra modal con Roblox
     if (interaction.customId === "verify2") {
       const config = await getGuildConfig(interaction.guildId!);
       const guild = interaction.guild!;
@@ -74,40 +74,28 @@ export async function execute(interaction: Interaction) {
         return;
       }
 
-      // If already has the verified role, just inform them
+      // Si ya tiene el rol, informar
       if (config.verifiedRoleId2 && member.roles.cache.has(config.verifiedRoleId2)) {
-        await interaction.reply({ content: "✅ Ya estás verificado.", ephemeral: true });
+        await interaction.reply({ content: "✅ Ya estás verificado en este servidor.", ephemeral: true });
         return;
       }
 
-      // Assign the verified role
-      let roleMention = "";
-      if (config.verifiedRoleId2) {
-        const role = guild.roles.cache.get(config.verifiedRoleId2);
-        if (role) {
-          try {
-            await member.roles.add(role);
-            roleMention = `Se te asignó el rol **${role.name}** ✅`;
-          } catch (e) {
-            logger.error(e, "Error asignando rol verificado v2");
-            roleMention = "⚠️ No pude asignarte el rol (asegúrate de que el rol del bot esté por encima).";
-          }
-        }
-      } else {
-        roleMention = "⚠️ No hay rol verificado configurado. Un admin debe usar `/setup-verificacion2`.";
-      }
+      // Mostrar modal pidiendo usuario de Roblox
+      const modal = new ModalBuilder()
+        .setCustomId("verify2_modal")
+        .setTitle("🔰 Verificación del Servidor");
 
-      const embed = new EmbedBuilder()
-        .setColor(0x57f287)
-        .setTitle("✅ ¡Verificación exitosa!")
-        .setDescription(
-          `${member}, te has verificado correctamente en el servidor.\n\n${roleMention}\n\n` +
-          "Ahora tienes acceso a todos los comandos del servidor: `daily`, `trabajar`, `banco`, `balance`, `rank`, `perfil` y muchos más. 🎉"
-        )
-        .setThumbnail(member.user.displayAvatarURL({ size: 256 }))
-        .setTimestamp();
+      const robloxInput = new TextInputBuilder()
+        .setCustomId("roblox_username")
+        .setLabel("Tu nombre de usuario en Roblox")
+        .setPlaceholder("Ej: CoolPlayer123")
+        .setStyle(TextInputStyle.Short)
+        .setRequired(true)
+        .setMinLength(3)
+        .setMaxLength(20);
 
-      await interaction.reply({ embeds: [embed], ephemeral: true });
+      modal.addComponents(new ActionRowBuilder<TextInputBuilder>().addComponents(robloxInput));
+      await interaction.showModal(modal);
       return;
     }
 
@@ -209,7 +197,7 @@ export async function execute(interaction: Interaction) {
   // ── Modals ───────────────────────────────────────────────────────────────
   if (interaction.isModalSubmit()) {
 
-    // — Modal verificación v1 —
+    // — Modal verificación v1 (bienvenida) —
     if (interaction.customId.startsWith("verify_modal_")) {
       await interaction.deferReply({ ephemeral: true });
       const username = interaction.fields.getTextInputValue("roblox_username").trim();
@@ -217,7 +205,7 @@ export async function execute(interaction: Interaction) {
 
       if (!roblox) {
         await interaction.editReply({
-          content: `❌ No encontré el usuario de Roblox **${username}**. Verifica que el nombre sea correcto.`,
+          content: `❌ No encontré el usuario de Roblox **${username}**. Verifica que el nombre sea correcto y vuelve a intentarlo.`,
         });
         return;
       }
@@ -239,13 +227,10 @@ export async function execute(interaction: Interaction) {
             await member.roles.add(role);
             roleMention = `\nSe te asignó el rol **${role.name}** ✅`;
           } catch (e) {
-            logger.error(e, "Error añadiendo rol verificado");
-            roleMention =
-              "\n⚠️ No pude asignarte el rol (asegúrate de que el rol del bot esté por encima del rol Verificado).";
+            logger.error(e, "Error añadiendo rol verificado v1");
+            roleMention = "\n⚠️ No pude asignarte el rol automáticamente. Contacta a un admin.";
           }
         }
-      } else {
-        roleMention = "\n⚠️ No hay rol verificado configurado. Un admin debe usar `/setup-bienvenida`.";
       }
 
       try {
@@ -275,6 +260,86 @@ export async function execute(interaction: Interaction) {
           `Te has verificado como **[${roblox.displayName}](${roblox.profileUrl})** en Roblox.${roleMention}`
         )
         .setThumbnail(roblox.avatarUrl ?? null)
+        .addFields(
+          { name: "🎮 Usuario Roblox", value: `[${roblox.name}](${roblox.profileUrl})`, inline: true },
+          { name: "🆔 ID Roblox", value: String(roblox.id), inline: true }
+        )
+        .setTimestamp();
+
+      await interaction.editReply({ embeds: [embed] });
+      return;
+    }
+
+    // — Modal verificación v2 (para todos) con Roblox —
+    if (interaction.customId === "verify2_modal") {
+      await interaction.deferReply({ ephemeral: true });
+      const username = interaction.fields.getTextInputValue("roblox_username").trim();
+
+      // Verificar que el usuario existe en Roblox
+      const roblox = await getRobloxUser(username);
+
+      if (!roblox) {
+        await interaction.editReply({
+          content: `❌ No encontré el usuario de Roblox **${username}**. Asegúrate de que el nombre sea exactamente correcto (respeta mayúsculas y minúsculas) y vuelve a intentarlo.`,
+        });
+        return;
+      }
+
+      const config = await getGuildConfig(interaction.guildId!);
+      const guild = interaction.guild!;
+      const member = await guild.members.fetch(interaction.user.id).catch(() => null);
+
+      if (!member) {
+        await interaction.editReply({ content: "❌ No pude encontrarte en el servidor." });
+        return;
+      }
+
+      // Asignar rol verificado
+      let roleMention = "";
+      if (config.verifiedRoleId2) {
+        const role = guild.roles.cache.get(config.verifiedRoleId2);
+        if (role) {
+          try {
+            await member.roles.add(role);
+            roleMention = `Se te asignó el rol **${role.name}** ✅`;
+          } catch (e) {
+            logger.error(e, "Error asignando rol verificado v2");
+            roleMention = "⚠️ No pude asignarte el rol automáticamente (el rol del bot debe estar por encima del rol Verificado).";
+          }
+        }
+      } else {
+        roleMention = "⚠️ No hay rol verificado configurado. Un admin debe usar `/setup-verificacion2`.";
+      }
+
+      // Guardar verificación
+      try {
+        await db.insert(verificationsTable).values({
+          guildId: interaction.guildId!,
+          discordUserId: interaction.user.id,
+          discordUserTag: interaction.user.tag,
+          robloxUsername: roblox.name,
+          robloxUserId: String(roblox.id),
+          robloxProfileUrl: roblox.profileUrl,
+        });
+      } catch {
+        await addVerificationJson({
+          guildId: interaction.guildId!,
+          discordUserId: interaction.user.id,
+          discordUserTag: interaction.user.tag,
+          robloxUsername: roblox.name,
+          robloxUserId: String(roblox.id),
+          robloxProfileUrl: roblox.profileUrl,
+        });
+      }
+
+      const embed = new EmbedBuilder()
+        .setColor(0x57f287)
+        .setTitle("✅ ¡Verificación exitosa!")
+        .setDescription(
+          `Te has verificado en el servidor como **[${roblox.displayName}](${roblox.profileUrl})** en Roblox.\n\n${roleMention}\n\n` +
+          "Ahora tienes acceso a todos los comandos: `daily`, `trabajar`, `banco`, `balance`, `rank`, `perfil`, `dungeon` y muchos más. 🎉"
+        )
+        .setThumbnail(roblox.avatarUrl ?? member.user.displayAvatarURL({ size: 256 }))
         .addFields(
           { name: "🎮 Usuario Roblox", value: `[${roblox.name}](${roblox.profileUrl})`, inline: true },
           { name: "🆔 ID Roblox", value: String(roblox.id), inline: true }
