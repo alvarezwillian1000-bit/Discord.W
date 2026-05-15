@@ -5,7 +5,7 @@ import { eq, and } from "drizzle-orm";
 
 export const data = new SlashCommandBuilder()
   .setName("robar")
-  .setDescription("Intenta robarle monedas a alguien (¡puede salir mal!)")
+  .setDescription("🙀 Intenta robarle monedas a alguien (¡puede salir mal!)")
   .addUserOption((o) => o.setName("usuario").setDescription("A quién intentar robar").setRequired(true));
 
 export async function execute(interaction: ChatInputCommandInteraction) {
@@ -22,7 +22,9 @@ export async function execute(interaction: ChatInputCommandInteraction) {
 
   await interaction.deferReply();
 
-  const eco = await getEconomy(interaction.guildId!, interaction.user.id);
+  const guildId = interaction.guildId!;
+  const userId = interaction.user.id;
+  const eco = await getEconomy(guildId, userId);
   const now = Date.now();
 
   const lastRob = eco.lastRobAt ? new Date(eco.lastRobAt).getTime() : 0;
@@ -40,12 +42,17 @@ export async function execute(interaction: ChatInputCommandInteraction) {
     await db
       .update(userEconomyTable)
       .set({ lastRobAt: new Date() })
-      .where(and(eq(userEconomyTable.guildId, interaction.guildId!), eq(userEconomyTable.userId, interaction.user.id)));
+      .where(and(eq(userEconomyTable.guildId, guildId), eq(userEconomyTable.userId, userId)));
   } catch {
-    // fallback
+    const { readJson, writeJson } = await import("../utils/db-json.js");
+    const all = readJson<Record<string, any>>("economy", {});
+    const key = `${guildId}:${userId}`;
+    if (!all[key]) all[key] = { guildId, userId, coins: 0, bank: 0, totalEarned: 0 };
+    all[key].lastRobAt = new Date().toISOString();
+    writeJson("economy", all);
   }
 
-  const targetEco = await getEconomy(interaction.guildId!, target.id);
+  const targetEco = await getEconomy(guildId, target.id);
   const targetMember = await interaction.guild!.members.fetch(target.id).catch(() => null);
   const targetName = targetMember?.displayName ?? target.username;
 
@@ -65,12 +72,12 @@ export async function execute(interaction: ChatInputCommandInteraction) {
   const fine = Math.floor(eco.coins * 0.15) + 50;
 
   if (successChance > 0.45) {
-    await addCoins(interaction.guildId!, target.id, -stolen);
-    await addCoins(interaction.guildId!, interaction.user.id, stolen);
+    await addCoins(guildId, target.id, -stolen);
+    await addCoins(guildId, userId, stolen);
 
     const embed = new EmbedBuilder()
       .setColor(0x57f287)
-      .setTitle("🦹 ¡Robo exitoso!")
+      .setTitle("🚉 ¡Robo exitoso!")
       .setDescription(`Le robaste **${formatCoins(stolen)}** a **${targetName}** sin que nadie se diera cuenta. 🕵️`)
       .addFields(
         { name: "💰 Robado", value: formatCoins(stolen), inline: true },
@@ -81,7 +88,7 @@ export async function execute(interaction: ChatInputCommandInteraction) {
     await interaction.editReply({ embeds: [embed] });
   } else {
     const actualFine = Math.min(fine, eco.coins);
-    await addCoins(interaction.guildId!, interaction.user.id, -actualFine);
+    await addCoins(guildId, userId, -actualFine);
 
     const embed = new EmbedBuilder()
       .setColor(0xed4245)
