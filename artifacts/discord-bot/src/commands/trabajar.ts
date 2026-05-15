@@ -10,7 +10,9 @@ export const data = new SlashCommandBuilder()
 export async function execute(interaction: ChatInputCommandInteraction) {
   await interaction.deferReply();
 
-  const eco = await getEconomy(interaction.guildId!, interaction.user.id);
+  const guildId = interaction.guildId!;
+  const userId = interaction.user.id;
+  const eco = await getEconomy(guildId, userId);
   const now = Date.now();
 
   const lastWork = eco.lastWorkAt ? new Date(eco.lastWorkAt).getTime() : 0;
@@ -28,18 +30,24 @@ export async function execute(interaction: ChatInputCommandInteraction) {
   const job = WORK_RESPONSES[Math.floor(Math.random() * WORK_RESPONSES.length)];
   const earned = Math.floor(Math.random() * (job.max - job.min + 1)) + job.min;
 
-  await addCoins(interaction.guildId!, interaction.user.id, earned);
+  await addCoins(guildId, userId, earned);
 
   try {
     await db
       .update(userEconomyTable)
       .set({ lastWorkAt: new Date() })
-      .where(and(eq(userEconomyTable.guildId, interaction.guildId!), eq(userEconomyTable.userId, interaction.user.id)));
+      .where(and(eq(userEconomyTable.guildId, guildId), eq(userEconomyTable.userId, userId)));
   } catch {
-    // fallback
+    const { readJson, writeJson } = await import("../utils/db-json.js");
+    const all = readJson<Record<string, any>>("economy", {});
+    const key = `${guildId}:${userId}`;
+    if (all[key]) {
+      all[key].lastWorkAt = new Date().toISOString();
+      writeJson("economy", all);
+    }
   }
 
-  const updated = await getEconomy(interaction.guildId!, interaction.user.id);
+  const updated = await getEconomy(guildId, userId);
 
   const embed = new EmbedBuilder()
     .setColor(0x57f287)
