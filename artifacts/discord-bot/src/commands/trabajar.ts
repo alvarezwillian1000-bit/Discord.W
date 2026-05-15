@@ -1,7 +1,5 @@
 import { SlashCommandBuilder, type ChatInputCommandInteraction, EmbedBuilder } from "discord.js";
-import { getEconomy, addCoins, formatCoins, WORK_COOLDOWN_MS, formatCooldown, WORK_RESPONSES } from "../utils/economy.js";
-import { db, userEconomyTable } from "@workspace/db";
-import { eq, and } from "drizzle-orm";
+import { getEconomy, addCoins, formatCoins, WORK_COOLDOWN_MS, formatCooldown, WORK_RESPONSES, updateEconomyTimestamp } from "../utils/economy.js";
 
 export const data = new SlashCommandBuilder()
   .setName("trabajar")
@@ -31,21 +29,7 @@ export async function execute(interaction: ChatInputCommandInteraction) {
   const earned = Math.floor(Math.random() * (job.max - job.min + 1)) + job.min;
 
   await addCoins(guildId, userId, earned);
-
-  try {
-    await db
-      .update(userEconomyTable)
-      .set({ lastWorkAt: new Date() })
-      .where(and(eq(userEconomyTable.guildId, guildId), eq(userEconomyTable.userId, userId)));
-  } catch {
-    const { readJson, writeJson } = await import("../utils/db-json.js");
-    const all = readJson<Record<string, any>>("economy", {});
-    const key = `${guildId}:${userId}`;
-    if (all[key]) {
-      all[key].lastWorkAt = new Date().toISOString();
-      writeJson("economy", all);
-    }
-  }
+  await updateEconomyTimestamp(guildId, userId, "lastWorkAt");
 
   const updated = await getEconomy(guildId, userId);
 
