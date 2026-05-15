@@ -1,8 +1,5 @@
 import { SlashCommandBuilder, type ChatInputCommandInteraction, EmbedBuilder } from "discord.js";
-import { getEconomy, addCoins, formatCoins, DAILY_COOLDOWN_MS, formatCooldown } from "../utils/economy.js";
-import { db, userEconomyTable } from "@workspace/db";
-import { eq, and } from "drizzle-orm";
-import { getEconomyJson, addCoinsJson } from "../utils/db-json.js";
+import { getEconomy, addCoins, formatCoins, DAILY_COOLDOWN_MS, formatCooldown, updateEconomyTimestamp } from "../utils/economy.js";
 
 const DAILY_MIN = 100;
 const DAILY_MAX = 500;
@@ -47,23 +44,7 @@ export async function execute(interaction: ChatInputCommandInteraction) {
   const msg = DAILY_MSGS[Math.floor(Math.random() * DAILY_MSGS.length)];
 
   await addCoins(guildId, userId, earned);
-
-  try {
-    await db
-      .update(userEconomyTable)
-      .set({ lastDailyAt: new Date() })
-      .where(and(eq(userEconomyTable.guildId, guildId), eq(userEconomyTable.userId, userId)));
-  } catch {
-    // JSON fallback: also save lastDailyAt
-    const all = getEconomyJson(guildId, userId);
-    // addCoinsJson already updated coins, we need to set the timestamp separately
-    const all2 = (await import("../utils/db-json.js")).readJson<Record<string, any>>("economy", {});
-    const key = `${guildId}:${userId}`;
-    if (all2[key]) {
-      all2[key].lastDailyAt = new Date().toISOString();
-      (await import("../utils/db-json.js")).writeJson("economy", all2);
-    }
-  }
+  await updateEconomyTimestamp(guildId, userId, "lastDailyAt");
 
   const updated = await getEconomy(guildId, userId);
 
