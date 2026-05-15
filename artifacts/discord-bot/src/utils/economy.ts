@@ -7,6 +7,8 @@ import {
   transferCoinsJson,
   getEconomyLeaderboardJson,
   setBankJson,
+  setCoinsJson,
+  updateEconomyFieldJson,
 } from "./db-json.js";
 
 export async function getEconomy(guildId: string, userId: string) {
@@ -54,33 +56,45 @@ export async function addCoins(guildId: string, userId: string, amount: number):
   }
 }
 
-// Staff command: directly set coins amount (add/remove exact number)
 export async function setCoinsAmount(guildId: string, userId: string, coins: number): Promise<void> {
   try {
     const safeCoins = Math.max(0, coins);
+    await getEconomy(guildId, userId);
     await db
       .update(userEconomyTable)
       .set({ coins: safeCoins })
       .where(and(eq(userEconomyTable.guildId, guildId), eq(userEconomyTable.userId, userId)));
   } catch {
-    const all = (await import("./db-json.js")).readJson<Record<string, any>>("economy", {});
-    const key = `${guildId}:${userId}`;
-    if (!all[key]) all[key] = { guildId, userId, coins: 0, bank: 0, totalEarned: 0 };
-    all[key].coins = Math.max(0, coins);
-    (await import("./db-json.js")).writeJson("economy", all);
+    await setCoinsJson(guildId, userId, coins);
   }
 }
 
-// Staff command: directly set bank amount
 export async function setBankAmount(guildId: string, userId: string, bank: number): Promise<void> {
   try {
     const safeBank = Math.max(0, bank);
+    await getEconomy(guildId, userId);
     await db
       .update(userEconomyTable)
       .set({ bank: safeBank })
       .where(and(eq(userEconomyTable.guildId, guildId), eq(userEconomyTable.userId, userId)));
   } catch {
     await setBankJson(guildId, userId, Math.max(0, bank));
+  }
+}
+
+export async function updateEconomyTimestamp(
+  guildId: string,
+  userId: string,
+  field: "lastDailyAt" | "lastWorkAt" | "lastRobAt"
+): Promise<void> {
+  const now = new Date();
+  try {
+    await db
+      .update(userEconomyTable)
+      .set({ [field]: now })
+      .where(and(eq(userEconomyTable.guildId, guildId), eq(userEconomyTable.userId, userId)));
+  } catch {
+    await updateEconomyFieldJson(guildId, userId, { [field]: now.toISOString() });
   }
 }
 
