@@ -1,111 +1,163 @@
 import {
   SlashCommandBuilder,
   type ChatInputCommandInteraction,
-  PermissionFlagsBits,
   EmbedBuilder,
+  PermissionFlagsBits,
 } from "discord.js";
 import { hasPermission } from "../utils/permissions.js";
-import { getEconomy, formatCoins } from "../utils/economy.js";
+import { getEconomy, addCoins, setCoinsAmount, setBankAmount, formatCoins } from "../utils/economy.js";
 
 export const data = new SlashCommandBuilder()
   .setName("staff-coins")
-  .setDescription("Da o quita monedas a un usuario (solo staff)")
+  .setDescription("🛡️ Gestiona las monedas de un usuario (solo staff)")
   .setDefaultMemberPermissions(PermissionFlagsBits.ModerateMembers)
   .addSubcommand((sub) =>
     sub
       .setName("dar")
       .setDescription("Da monedas a un usuario")
-      .addUserOption((o) => o.setName("usuario").setDescription("Usuario a dar monedas").setRequired(true))
-      .addIntegerOption((o) => o.setName("cantidad").setDescription("Cantidad de monedas").setRequired(true).setMinValue(1))
+      .addUserOption((o) => o.setName("usuario").setDescription("Usuario objetivo").setRequired(true))
+      .addIntegerOption((o) =>
+        o.setName("cantidad").setDescription("Cantidad a dar").setRequired(true).setMinValue(1).setMaxValue(1000000)
+      )
   )
   .addSubcommand((sub) =>
     sub
       .setName("quitar")
       .setDescription("Quita monedas a un usuario")
-      .addUserOption((o) => o.setName("usuario").setDescription("Usuario a quitar monedas").setRequired(true))
-      .addIntegerOption((o) => o.setName("cantidad").setDescription("Cantidad de monedas").setRequired(true).setMinValue(1))
+      .addUserOption((o) => o.setName("usuario").setDescription("Usuario objetivo").setRequired(true))
+      .addIntegerOption((o) =>
+        o.setName("cantidad").setDescription("Cantidad a quitar").setRequired(true).setMinValue(1).setMaxValue(1000000)
+      )
   )
   .addSubcommand((sub) =>
     sub
       .setName("set")
-      .setDescription("Establece exactamente la cantidad de monedas de cartera")
-      .addUserOption((o) => o.setName("usuario").setDescription("Usuario").setRequired(true))
-      .addIntegerOption((o) => o.setName("cantidad").setDescription("Cantidad exacta").setRequired(true).setMinValue(0))
+      .setDescription("Establece el saldo exacto de la cartera de un usuario")
+      .addUserOption((o) => o.setName("usuario").setDescription("Usuario objetivo").setRequired(true))
+      .addIntegerOption((o) =>
+        o.setName("cantidad").setDescription("Cantidad exacta").setRequired(true).setMinValue(0).setMaxValue(10000000)
+      )
   )
   .addSubcommand((sub) =>
     sub
       .setName("set-banco")
-      .setDescription("Establece exactamente la cantidad del banco")
-      .addUserOption((o) => o.setName("usuario").setDescription("Usuario").setRequired(true))
-      .addIntegerOption((o) => o.setName("cantidad").setDescription("Cantidad exacta").setRequired(true).setMinValue(0))
+      .setDescription("Establece el saldo exacto del banco de un usuario")
+      .addUserOption((o) => o.setName("usuario").setDescription("Usuario objetivo").setRequired(true))
+      .addIntegerOption((o) =>
+        o.setName("cantidad").setDescription("Cantidad exacta").setRequired(true).setMinValue(0).setMaxValue(10000000)
+      )
+  )
+  .addSubcommand((sub) =>
+    sub
+      .setName("ver")
+      .setDescription("Ver el balance de cualquier usuario")
+      .addUserOption((o) => o.setName("usuario").setDescription("Usuario objetivo").setRequired(true))
   );
 
 export async function execute(interaction: ChatInputCommandInteraction) {
   if (!(await hasPermission(interaction.member as any, "staff"))) {
-    await interaction.reply({ content: "❌ Solo staff puede usar este comando.", ephemeral: true });
+    await interaction.reply({
+      content: "❌ No tienes permisos de staff para usar este comando.",
+      ephemeral: true,
+    });
     return;
   }
 
   const sub = interaction.options.getSubcommand();
-  const target = interaction.options.getUser("usuario", true);
-  const amount = interaction.options.getInteger("cantidad", true);
+  const targetUser = interaction.options.getUser("usuario", true);
+  const cantidad = interaction.options.getInteger("cantidad", false) ?? 0;
   const guildId = interaction.guildId!;
 
-  const { addCoins, setCoinsAmount, setBankAmount } = await import("../utils/economy.js");
+  const targetMember = await interaction.guild!.members.fetch(targetUser.id).catch(() => null);
+  const targetName = targetMember?.displayName ?? targetUser.username;
 
-  let updated;
+  await interaction.deferReply({ ephemeral: true });
 
   if (sub === "dar") {
-    await addCoins(guildId, target.id, amount);
-    updated = await getEconomy(guildId, target.id);
+    await addCoins(guildId, targetUser.id, cantidad);
+    const eco = await getEconomy(guildId, targetUser.id);
+
     const embed = new EmbedBuilder()
       .setColor(0x57f287)
-      .setTitle("💰 Monedas entregadas")
-      .setDescription(`Se dieron **${formatCoins(amount)}** a ${target}.`)
+      .setTitle("✅ Monedas entregadas")
       .addFields(
-        { name: "👛 Cartera", value: formatCoins(updated.coins), inline: true },
-        { name: "🏦 Banco", value: formatCoins(updated.bank), inline: true },
+        { name: "👤 Usuario", value: targetName, inline: true },
+        { name: "💰 Dado", value: formatCoins(cantidad), inline: true },
+        { name: "👛 Cartera ahora", value: formatCoins(eco.coins), inline: true },
       )
+      .setFooter({ text: `Por ${interaction.user.tag}` })
       .setTimestamp();
-    await interaction.reply({ embeds: [embed], ephemeral: true });
+
+    await interaction.editReply({ embeds: [embed] });
+
   } else if (sub === "quitar") {
-    await addCoins(guildId, target.id, -amount);
-    updated = await getEconomy(guildId, target.id);
+    await addCoins(guildId, targetUser.id, -cantidad);
+    const eco = await getEconomy(guildId, targetUser.id);
+
     const embed = new EmbedBuilder()
       .setColor(0xed4245)
-      .setTitle("💰 Monedas quitadas")
-      .setDescription(`Se quitaron **${formatCoins(amount)}** a ${target}.`)
+      .setTitle("✅ Monedas retiradas")
       .addFields(
-        { name: "👛 Cartera", value: formatCoins(updated.coins), inline: true },
-        { name: "🏦 Banco", value: formatCoins(updated.bank), inline: true },
+        { name: "👤 Usuario", value: targetName, inline: true },
+        { name: "💸 Quitado", value: formatCoins(cantidad), inline: true },
+        { name: "👛 Cartera ahora", value: formatCoins(eco.coins), inline: true },
       )
+      .setFooter({ text: `Por ${interaction.user.tag}` })
       .setTimestamp();
-    await interaction.reply({ embeds: [embed], ephemeral: true });
+
+    await interaction.editReply({ embeds: [embed] });
+
   } else if (sub === "set") {
-    await setCoinsAmount(guildId, target.id, amount);
-    updated = await getEconomy(guildId, target.id);
+    await setCoinsAmount(guildId, targetUser.id, cantidad);
+    const eco = await getEconomy(guildId, targetUser.id);
+
     const embed = new EmbedBuilder()
       .setColor(0xffd700)
-      .setTitle("💰 Cartera establecida")
-      .setDescription(`La cartera de ${target} se estableció en **${formatCoins(amount)}**.`)
+      .setTitle("✅ Cartera actualizada")
       .addFields(
-        { name: "👛 Cartera", value: formatCoins(updated.coins), inline: true },
-        { name: "🏦 Banco", value: formatCoins(updated.bank), inline: true },
+        { name: "👤 Usuario", value: targetName, inline: true },
+        { name: "👛 Cartera establecida a", value: formatCoins(cantidad), inline: true },
+        { name: "🏦 Banco", value: formatCoins(eco.bank), inline: true },
       )
+      .setFooter({ text: `Por ${interaction.user.tag}` })
       .setTimestamp();
-    await interaction.reply({ embeds: [embed], ephemeral: true });
+
+    await interaction.editReply({ embeds: [embed] });
+
   } else if (sub === "set-banco") {
-    await setBankAmount(guildId, target.id, amount);
-    updated = await getEconomy(guildId, target.id);
+    await setBankAmount(guildId, targetUser.id, cantidad);
+    const eco = await getEconomy(guildId, targetUser.id);
+
+    const embed = new EmbedBuilder()
+      .setColor(0xffd700)
+      .setTitle("✅ Banco actualizado")
+      .addFields(
+        { name: "👤 Usuario", value: targetName, inline: true },
+        { name: "🏦 Banco establecido a", value: formatCoins(cantidad), inline: true },
+        { name: "👛 Cartera", value: formatCoins(eco.coins), inline: true },
+      )
+      .setFooter({ text: `Por ${interaction.user.tag}` })
+      .setTimestamp();
+
+    await interaction.editReply({ embeds: [embed] });
+
+  } else if (sub === "ver") {
+    const eco = await getEconomy(guildId, targetUser.id);
+    const total = eco.coins + eco.bank;
+
     const embed = new EmbedBuilder()
       .setColor(0x5865f2)
-      .setTitle("🏦 Banco establecido")
-      .setDescription(`El banco de ${target} se estableció en **${formatCoins(amount)}**.`)
+      .setTitle(`💰 Balance de ${targetName}`)
+      .setThumbnail(targetMember?.displayAvatarURL() ?? targetUser.displayAvatarURL())
       .addFields(
-        { name: "👛 Cartera", value: formatCoins(updated.coins), inline: true },
-        { name: "🏦 Banco", value: formatCoins(updated.bank), inline: true },
+        { name: "👛 Cartera", value: formatCoins(eco.coins), inline: true },
+        { name: "🏦 Banco", value: formatCoins(eco.bank), inline: true },
+        { name: "💎 Total", value: formatCoins(total), inline: true },
+        { name: "📈 Total ganado", value: formatCoins(eco.totalEarned), inline: true },
       )
+      .setFooter({ text: `Por ${interaction.user.tag}` })
       .setTimestamp();
-    await interaction.reply({ embeds: [embed], ephemeral: true });
+
+    await interaction.editReply({ embeds: [embed] });
   }
 }
