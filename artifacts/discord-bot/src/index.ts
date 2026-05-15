@@ -1,4 +1,4 @@
-import { Client, GatewayIntentBits, Collection } from "discord.js";
+import { Client, GatewayIntentBits, Collection, REST, Routes } from "discord.js";
 import { readdirSync } from "fs";
 import { fileURLToPath, pathToFileURL } from "url";
 import { dirname, join } from "path";
@@ -11,7 +11,6 @@ export { logger };
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
 
-// Export client at module level so giveaways.ts and others can import it
 export const client = new Client({
   intents: [
     GatewayIntentBits.Guilds,
@@ -70,6 +69,37 @@ async function loadEvents() {
   }
 }
 
+async function deployCommands() {
+  const token = process.env.DISCORD_TOKEN;
+  const clientId = process.env.DISCORD_CLIENT_ID;
+  if (!token || !clientId) {
+    logger.warn("DISCORD_TOKEN o DISCORD_CLIENT_ID no configurados. No se registrarán comandos.");
+    return;
+  }
+
+  try {
+    const commands: unknown[] = [];
+    const commandsPath = join(__dirname, "commands");
+    const commandFiles = readdirSync(commandsPath).filter(
+      (f) => f.endsWith(".ts") || f.endsWith(".js")
+    );
+    for (const file of commandFiles) {
+      const filePath = pathToFileURL(join(commandsPath, file)).href;
+      const command = await import(filePath);
+      if ("data" in command) {
+        commands.push(command.data.toJSON());
+      }
+    }
+
+    const rest = new REST({ version: "10" }).setToken(token);
+    logger.info(`Registrando ${commands.length} comandos en Discord...`);
+    const data = (await rest.put(Routes.applicationCommands(clientId), { body: commands })) as any[];
+    logger.info(`✅ ${data.length} comandos registrados en Discord.`);
+  } catch (err) {
+    logger.error(err, "Error registrando comandos en Discord");
+  }
+}
+
 function startHealthServer() {
   const port = parseInt(process.env.PORT ?? "8082", 10);
   const server = createServer((req, res) => {
@@ -93,10 +123,8 @@ async function main() {
     process.exit(1);
   }
 
-  // Start health server FIRST so Railway doesn't kill us during DB connection
   startHealthServer();
 
-  // Init DB non-blocking — fallback to JSON if Postgres unavailable
   initDatabase().catch((err) => {
     logger.error(err, "Error en initDatabase (no fatal)");
   });
@@ -104,6 +132,9 @@ async function main() {
   await loadCommands();
   await loadEvents();
   await client.login(token);
+
+  // Deploy commands after bot is ready (needs client to be logged in)
+  await deployCommands();
 }
 
 main().catch((err) => {
