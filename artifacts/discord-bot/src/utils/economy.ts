@@ -6,6 +6,7 @@ import {
   addCoinsJson,
   transferCoinsJson,
   getEconomyLeaderboardJson,
+  setBankJson,
 } from "./db-json.js";
 
 export async function getEconomy(guildId: string, userId: string) {
@@ -50,6 +51,36 @@ export async function addCoins(guildId: string, userId: string, amount: number):
       .where(and(eq(userEconomyTable.guildId, guildId), eq(userEconomyTable.userId, userId)));
   } catch {
     await addCoinsJson(guildId, userId, amount);
+  }
+}
+
+// Staff command: directly set coins amount (add/remove exact number)
+export async function setCoinsAmount(guildId: string, userId: string, coins: number): Promise<void> {
+  try {
+    const safeCoins = Math.max(0, coins);
+    await db
+      .update(userEconomyTable)
+      .set({ coins: safeCoins })
+      .where(and(eq(userEconomyTable.guildId, guildId), eq(userEconomyTable.userId, userId)));
+  } catch {
+    const all = (await import("./db-json.js")).readJson<Record<string, any>>("economy", {});
+    const key = `${guildId}:${userId}`;
+    if (!all[key]) all[key] = { guildId, userId, coins: 0, bank: 0, totalEarned: 0 };
+    all[key].coins = Math.max(0, coins);
+    (await import("./db-json.js")).writeJson("economy", all);
+  }
+}
+
+// Staff command: directly set bank amount
+export async function setBankAmount(guildId: string, userId: string, bank: number): Promise<void> {
+  try {
+    const safeBank = Math.max(0, bank);
+    await db
+      .update(userEconomyTable)
+      .set({ bank: safeBank })
+      .where(and(eq(userEconomyTable.guildId, guildId), eq(userEconomyTable.userId, userId)));
+  } catch {
+    await setBankJson(guildId, userId, Math.max(0, bank));
   }
 }
 
