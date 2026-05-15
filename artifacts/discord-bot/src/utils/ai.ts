@@ -1,19 +1,4 @@
-import OpenAI from "openai";
 import { logger } from "../utils/logger.js";
-
-const baseURL = process.env.AI_INTEGRATIONS_OPENAI_BASE_URL;
-const apiKey = process.env.AI_INTEGRATIONS_OPENAI_API_KEY;
-
-let openai: OpenAI | null = null;
-
-try {
-  if (baseURL) {
-    openai = new OpenAI({ baseURL, apiKey: apiKey ?? undefined });
-  }
-} catch (e) {
-  logger.error(e, "Error inicializando OpenAI");
-  openai = null;
-}
 
 export type ChatMessage = { role: "system" | "user" | "assistant"; content: string };
 
@@ -47,46 +32,83 @@ export function clearHistory(channelId: string) {
   channelHistories.delete(channelId);
 }
 
-const MODELS = ["gpt-5-mini", "gpt-5", "gpt-4.1-mini"] as const;
+// Lista de endpoints a intentar en orden
+function getEndpoints(): { url: string; headers: Record<string, string> }[] {
+  const endpoints = [];
 
-async function tryGenerate(messages: ChatMessage[], modelIndex = 0): Promise<string> {
-  const model = MODELS[modelIndex] ?? MODELS[0];
-
-  // Si OpenAI no está configurado, usa respuesta creativa fallback
-  if (!openai) {
-    if (modelIndex === 0) {
-      logger.warn("OpenAI no está configurado. Usando respuesta fallback creativa.");
-    }
-    const lastUser = messages.filter(m => m.role === "user").pop()?.content ?? "";
-    const userName = lastUser.match(/^\[([^\]]+)\]/)?.[1] ?? "amigo";
-    const fallbackReplies = [
-      `Ey ${userName}, justo ahora estoy procesando eso en mis circuitos... Dame un segundo y vuelve a intentarlo. 🚀`,
-      `${userName}, mis neuronas artificiales están en mantenimiento cósmico. Un momento por favor. ✨`,
-      `Vaya pregunta, ${userName}... Estoy conectando con la matrix para darte la mejor respuesta. Reintenta. 🌟`,
-      `Lo siento ${userName}, mi conexión interdimensional falló. Vuelve a intentarlo en unos segundos. 💫`,
-      `${userName}, estoy recalibrando mis chakras digitales. Un momento... 🔮`,
-    ];
-    return fallbackReplies[Math.floor(Math.random() * fallbackReplies.length)];
-  }
-
-  try {
-    const response = await openai.chat.completions.create({
-      model,
-      max_completion_tokens: 600,
-      messages: messages as any,
+  // 1. Endpoint configurado por el usuario (Railway env vars)
+  const customBase = process.env.AI_BASE_URL ?? process.env.AI_INTEGRATIONS_OPENAI_BASE_URL;
+  const customKey = process.env.AI_API_KEY ?? process.env.AI_INTEGRATIONS_OPENAI_API_KEY;
+  if (customBase) {
+    endpoints.push({
+      url: customBase.endsWith("/chat/completions")
+        ? customBase
+        : `${customBase.replace(/\/$/, "")}/chat/completions`,
+      headers: customKey ? { Authorization: `Bearer ${customKey}` } : {},
     });
-    const content = response.choices[0]?.message?.content;
-    if (!content || content.trim() === "") {
-      throw new Error("Respuesta vacía del modelo");
-    }
-    return content.trim();
-  } catch (err: any) {
-    logger.warn({ err, model }, `Fallo con modelo ${model}`);
-    if (modelIndex < MODELS.length - 1) {
-      return tryGenerate(messages, modelIndex + 1);
-    }
-    throw err;
   }
+
+  // 2. Pollinations.ai — completamente gratis, sin API key
+  endpoints.push({
+    url: "https://text.pollinations.ai/openai",
+    headers: {},
+  });
+
+  return endpoints;
+}
+
+const MODELS = ["openai", "openai-large", "mistral"] as const;
+
+async function tryEndpoint(
+  endpoint: { url: string; headers: Record<string, string> },
+  messages: ChatMessage[],
+  model: string
+): Promise<string> {
+  const resp = await fetch(endpoint.url, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", ...endpoint.headers },
+    body: JSON.stringify({
+      model,
+      messages,
+      max_tokens: 600,
+      temperature: 0.9,
+    }),
+    signal: AbortSignal.timeout(20000),
+  });
+
+  if (!resp.ok) {
+    const text = await resp.text().catch(() => "");
+    throw new Error(`HTTP ${resp.status}: ${text.slice(0, 200)}`);
+  }
+
+  const json = await resp.json() as any;
+  const content =
+    json.choices?.[0]?.message?.content ??
+    json.choices?.[0]?.text ??
+    json.content ??
+    "";
+
+  if (!content || content.trim() === "") {
+    throw new Error("Respuesta vacía");
+  }
+  return content.trim();
+}
+
+async function generate(messages: ChatMessage[]): Promise<string> {
+  const endpoints = getEndpoints();
+
+  for (const endpoint of endpoints) {
+    for (const model of MODELS) {
+      try {
+        const result = await tryEndpoint(endpoint, messages, model);
+        return result;
+      } catch (err: any) {
+        logger.warn({ err: err?.message, url: endpoint.url, model }, "Fallo generando IA, probando siguiente opción");
+      }
+    }
+  }
+
+  throw new Error("Todos los endpoints de IA fallaron");
 }
 
 export async function generateReply(opts: {
@@ -104,16 +126,17 @@ export async function generateReply(opts: {
 ${personality}
 
 Instrucciones clave:
-- Responde siempre en el idioma del usuario (español por defecto).
+- Responde SIEMPRE en español.
 - Sé muy expresivo, original y con carisma propio. Nunca suenes genérico.
 - Máximo 800 caracteres. Sé directo pero memorable.
-- Usa emojis estratégicamente (no en cada frase, solo donde den impacto).
-- Si te mandan una imagen/archivo, comenta sobre su descripción.
+- Usa emojis estratégicamente (solo donde den impacto real).
+- Si te mandan una imagen/archivo, comenta sobre su descripción de forma creativa.
 - Recuerdas el contexto de la conversación actual.
-- No menciones que eres una IA ni ChatGPT. Solo eres ${botName}.
-- Si alguien te insulta, responde con humor e inteligencia.
-- Si preguntan algo que no sabes, improvisa de forma creativa y honesta.
-- NUNCA digas "no puedo" o "no sé" — siempre busca una forma creativa de responder.`;
+- NO menciones que eres una IA ni ChatGPT. Solo eres ${botName}.
+- Si alguien te insulta, responde con humor e inteligencia, nunca con agresividad.
+- Si preguntan algo que no sabes, improvisa de forma creativa y entretenida.
+- NUNCA digas "no puedo" o "no tengo acceso" — siempre busca una forma creativa de responder.
+- Responde directamente al contenido del mensaje. Si alguien dice "hola", saluda. Si hace una pregunta, respóndela.`;
 
   let fullUserContent = `[${username}]: ${userMessage}`;
   if (attachmentDesc) fullUserContent += `\n[Adjunto: ${attachmentDesc}]`;
@@ -126,17 +149,16 @@ Instrucciones clave:
   ];
 
   try {
-    const reply = await tryGenerate(messages);
+    const reply = await generate(messages);
     addToHistory(channelId, { role: "assistant", content: reply });
     return reply;
   } catch (err) {
-    logger.error(err, "Error generando respuesta de IA");
-    // Último fallback: respuesta creativa genérica
+    logger.error(err, "Error generando respuesta de IA - todos los endpoints fallaron");
     const fallbacks = [
-      "Mis circuitos están en modo zen ahora mismo. Vuelve a intentarlo. 💫",
-      "Tuve un momento de inspiración cósmica... pero se me escapó. Reintenta. ✨",
+      "Mis circuitos están procesando demasiado en este momento. Vuelve a intentarlo. 💫",
       "Estoy canalizando energía creativa de otra dimensión. Un momento... 🔮",
       "Mi procesador cuántico está haciendo overtime. Dame un segundo. 🚀",
+      "Tuve una chispa de inspiración pero se fue rápido. ¡Reintenta! ✨",
     ];
     const fb = fallbacks[Math.floor(Math.random() * fallbacks.length)];
     addToHistory(channelId, { role: "assistant", content: fb });
