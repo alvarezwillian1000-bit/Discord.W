@@ -25,7 +25,9 @@ export const data = new SlashCommandBuilder()
 export async function execute(interaction: ChatInputCommandInteraction) {
   await interaction.deferReply();
 
-  const eco = await getEconomy(interaction.guildId!, interaction.user.id);
+  const guildId = interaction.guildId!;
+  const userId = interaction.user.id;
+  const eco = await getEconomy(guildId, userId);
   const now = Date.now();
 
   const lastDaily = eco.lastDailyAt ? new Date(eco.lastDailyAt).getTime() : 0;
@@ -44,18 +46,26 @@ export async function execute(interaction: ChatInputCommandInteraction) {
   const earned = Math.floor(Math.random() * (DAILY_MAX - DAILY_MIN + 1)) + DAILY_MIN;
   const msg = DAILY_MSGS[Math.floor(Math.random() * DAILY_MSGS.length)];
 
-  await addCoins(interaction.guildId!, interaction.user.id, earned);
+  await addCoins(guildId, userId, earned);
 
   try {
     await db
       .update(userEconomyTable)
       .set({ lastDailyAt: new Date() })
-      .where(and(eq(userEconomyTable.guildId, interaction.guildId!), eq(userEconomyTable.userId, interaction.user.id)));
+      .where(and(eq(userEconomyTable.guildId, guildId), eq(userEconomyTable.userId, userId)));
   } catch {
-    // JSON fallback already updated via addCoinsJson
+    // JSON fallback: also save lastDailyAt
+    const all = getEconomyJson(guildId, userId);
+    // addCoinsJson already updated coins, we need to set the timestamp separately
+    const all2 = (await import("../utils/db-json.js")).readJson<Record<string, any>>("economy", {});
+    const key = `${guildId}:${userId}`;
+    if (all2[key]) {
+      all2[key].lastDailyAt = new Date().toISOString();
+      (await import("../utils/db-json.js")).writeJson("economy", all2);
+    }
   }
 
-  const updated = await getEconomy(interaction.guildId!, interaction.user.id);
+  const updated = await getEconomy(guildId, userId);
 
   const embed = new EmbedBuilder()
     .setColor(0xffd700)
