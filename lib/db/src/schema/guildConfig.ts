@@ -4,6 +4,8 @@ export const guildConfigTable = pgTable("guild_config", {
   guildId: text("guild_id").primaryKey(),
   welcomeChannelId: text("welcome_channel_id"),
   verifiedRoleId: text("verified_role_id"),
+  verifiedRoleId2: text("verified_role_id_2"),
+  verificationChannelId: text("verification_channel_id"),
   ticketsChannelId: text("tickets_channel_id"),
   ticketCategoryId: text("ticket_category_id"),
   generalAdminRoles: text("general_admin_roles").array(),
