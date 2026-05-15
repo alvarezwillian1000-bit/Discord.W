@@ -1,7 +1,5 @@
 import { SlashCommandBuilder, type ChatInputCommandInteraction, EmbedBuilder } from "discord.js";
-import { getEconomy, addCoins, formatCoins, ROB_COOLDOWN_MS, formatCooldown } from "../utils/economy.js";
-import { db, userEconomyTable } from "@workspace/db";
-import { eq, and } from "drizzle-orm";
+import { getEconomy, addCoins, formatCoins, ROB_COOLDOWN_MS, formatCooldown, updateEconomyTimestamp } from "../utils/economy.js";
 
 export const data = new SlashCommandBuilder()
   .setName("robar")
@@ -38,19 +36,7 @@ export async function execute(interaction: ChatInputCommandInteraction) {
     return;
   }
 
-  try {
-    await db
-      .update(userEconomyTable)
-      .set({ lastRobAt: new Date() })
-      .where(and(eq(userEconomyTable.guildId, guildId), eq(userEconomyTable.userId, userId)));
-  } catch {
-    const { readJson, writeJson } = await import("../utils/db-json.js");
-    const all = readJson<Record<string, any>>("economy", {});
-    const key = `${guildId}:${userId}`;
-    if (!all[key]) all[key] = { guildId, userId, coins: 0, bank: 0, totalEarned: 0 };
-    all[key].lastRobAt = new Date().toISOString();
-    writeJson("economy", all);
-  }
+  await updateEconomyTimestamp(guildId, userId, "lastRobAt");
 
   const targetEco = await getEconomy(guildId, target.id);
   const targetMember = await interaction.guild!.members.fetch(target.id).catch(() => null);
