@@ -10,7 +10,7 @@ try {
   logger.error({ err: e }, "No se pudo crear el directorio de datos JSON");
 }
 
-function readJson<T>(name: string, fallback: T): T {
+export function readJson<T>(name: string, fallback: T): T {
   const path = join(DATA_DIR, `${name}.json`);
   if (!existsSync(path)) return fallback;
   try {
@@ -20,7 +20,7 @@ function readJson<T>(name: string, fallback: T): T {
   }
 }
 
-function writeJson(name: string, data: unknown): void {
+export function writeJson(name: string, data: unknown): void {
   const path = join(DATA_DIR, `${name}.json`);
   try {
     writeFileSync(path, JSON.stringify(data, null, 2));
@@ -75,6 +75,20 @@ export async function addCoinsJson(guildId: string, userId: string, amount: numb
   writeJson("economy", all);
 }
 
+export async function updateEconomyFieldJson(
+  guildId: string,
+  userId: string,
+  fields: Record<string, any>
+) {
+  const all = readJson<Record<string, any>>("economy", {});
+  const key = `${guildId}:${userId}`;
+  if (!all[key]) {
+    all[key] = { guildId, userId, coins: 0, bank: 0, totalEarned: 0 };
+  }
+  Object.assign(all[key], fields);
+  writeJson("economy", all);
+}
+
 export async function transferCoinsJson(
   guildId: string,
   fromUserId: string,
@@ -108,6 +122,14 @@ export async function setBankJson(guildId: string, userId: string, amount: numbe
   const key = `${guildId}:${userId}`;
   if (!all[key]) all[key] = { guildId, userId, coins: 0, bank: 0, totalEarned: 0 };
   all[key].bank = amount;
+  writeJson("economy", all);
+}
+
+export async function setCoinsJson(guildId: string, userId: string, amount: number) {
+  const all = readJson<Record<string, any>>("economy", {});
+  const key = `${guildId}:${userId}`;
+  if (!all[key]) all[key] = { guildId, userId, coins: 0, bank: 0, totalEarned: 0 };
+  all[key].coins = Math.max(0, amount);
   writeJson("economy", all);
 }
 
@@ -184,6 +206,11 @@ export async function addVerificationJson(data: {
   const all = readJson<any[]>("verifications", []);
   all.push({ ...data, createdAt: new Date().toISOString() });
   writeJson("verifications", all);
+}
+
+export async function getVerificationJson(discordUserId: string) {
+  const all = readJson<any[]>("verifications", []);
+  return all.filter((v: any) => v.discordUserId === discordUserId);
 }
 
 // ===== Tickets =====
