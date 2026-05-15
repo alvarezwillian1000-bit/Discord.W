@@ -41,7 +41,7 @@ export async function execute(interaction: Interaction) {
   // ── Buttons ─────────────────────────────────────────────────────────────
   if (interaction.isButton()) {
 
-    // — Verificación —
+    // — Verificación v1 (bienvenida para nuevos) —
     if (interaction.customId.startsWith("verify_")) {
       const targetUserId = interaction.customId.split("_")[1];
       if (interaction.user.id !== targetUserId) {
@@ -60,6 +60,54 @@ export async function execute(interaction: Interaction) {
         .setMaxLength(20);
       modal.addComponents(new ActionRowBuilder<TextInputBuilder>().addComponents(robloxInput));
       await interaction.showModal(modal);
+      return;
+    }
+
+    // — Verificación v2 (para todos los usuarios del servidor) —
+    if (interaction.customId === "verify2") {
+      const config = await getGuildConfig(interaction.guildId!);
+      const guild = interaction.guild!;
+      const member = await guild.members.fetch(interaction.user.id).catch(() => null);
+
+      if (!member) {
+        await interaction.reply({ content: "❌ No pude encontrarte en el servidor.", ephemeral: true });
+        return;
+      }
+
+      // If already has the verified role, just inform them
+      if (config.verifiedRoleId2 && member.roles.cache.has(config.verifiedRoleId2)) {
+        await interaction.reply({ content: "✅ Ya estás verificado.", ephemeral: true });
+        return;
+      }
+
+      // Assign the verified role
+      let roleMention = "";
+      if (config.verifiedRoleId2) {
+        const role = guild.roles.cache.get(config.verifiedRoleId2);
+        if (role) {
+          try {
+            await member.roles.add(role);
+            roleMention = `Se te asignó el rol **${role.name}** ✅`;
+          } catch (e) {
+            logger.error(e, "Error asignando rol verificado v2");
+            roleMention = "⚠️ No pude asignarte el rol (asegúrate de que el rol del bot esté por encima).";
+          }
+        }
+      } else {
+        roleMention = "⚠️ No hay rol verificado configurado. Un admin debe usar `/setup-verificacion2`.";
+      }
+
+      const embed = new EmbedBuilder()
+        .setColor(0x57f287)
+        .setTitle("✅ ¡Verificación exitosa!")
+        .setDescription(
+          `${member}, te has verificado correctamente en el servidor.\n\n${roleMention}\n\n` +
+          "Ahora tienes acceso a todos los comandos del servidor: `daily`, `trabajar`, `banco`, `balance`, `rank`, `perfil` y muchos más. 🎉"
+        )
+        .setThumbnail(member.user.displayAvatarURL({ size: 256 }))
+        .setTimestamp();
+
+      await interaction.reply({ embeds: [embed], ephemeral: true });
       return;
     }
 
@@ -100,7 +148,6 @@ export async function execute(interaction: Interaction) {
         .setTimestamp();
       await interaction.reply({ embeds: [embed] });
 
-      // Marcar ticket como cerrado en DB o JSON
       const channelId = interaction.channel.id;
       try {
         await db
@@ -162,7 +209,7 @@ export async function execute(interaction: Interaction) {
   // ── Modals ───────────────────────────────────────────────────────────────
   if (interaction.isModalSubmit()) {
 
-    // — Modal verificación —
+    // — Modal verificación v1 —
     if (interaction.customId.startsWith("verify_modal_")) {
       await interaction.deferReply({ ephemeral: true });
       const username = interaction.fields.getTextInputValue("roblox_username").trim();
@@ -201,7 +248,6 @@ export async function execute(interaction: Interaction) {
         roleMention = "\n⚠️ No hay rol verificado configurado. Un admin debe usar `/setup-bienvenida`.";
       }
 
-      // Guardar verificación en DB o JSON
       try {
         await db.insert(verificationsTable).values({
           guildId: interaction.guildId!,
@@ -303,7 +349,6 @@ export async function execute(interaction: Interaction) {
         components: [new ActionRowBuilder<ButtonBuilder>().addComponents(closeButton)],
       });
 
-      // Guardar ticket en DB o JSON
       try {
         await db.insert(ticketsTable).values({
           guildId: guild.id,
